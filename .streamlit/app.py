@@ -111,7 +111,7 @@ if "telemetry" not in st.session_state:
         "breakdown": {"python": 0, "web": 0, "wiki": 0}
     }
 
-# --- Sidebar & Intelligent Model Discovery ---
+# --- Sidebar & Dynamic Model Discovery ---
 with st.sidebar:
     st.header("⚙️ Agent Controls")
     
@@ -126,27 +126,26 @@ with st.sidebar:
 
     client = Groq(api_key=st.session_state.api_key) if st.session_state.api_key else None
 
-    # Discover and rank real models from the user's Groq account
+    # Discover and sort tool-calling models available in user account
     valid_models = []
     if client:
         try:
             raw_models = [m.id for m in client.models.list().data]
-            # Exclude non-chat, audio, guarded, or third-party restricted models
             blacklisted_keywords = ["whisper", "guard", "vision", "embed", "safeguard", "orpheus", "canopy", "audio", "tts"]
             valid_models = [
                 m for m in raw_models
                 if not any(b in m.lower() for b in blacklisted_keywords)
             ]
 
-            # Rank models by reliability for tool calling
+            # Priority ranking for reliable tool-calling models
             def rank_model(name):
                 n = name.lower()
-                if "llama-3.3-70b" in n: return 1
-                if "llama3-70b-8192" in n: return 2
-                if "llama-3.1-70b" in n: return 3
-                if "llama3-8b-8192" in n: return 4
-                if "llama-3.1-8b" in n: return 5
-                if "mixtral-8x7b" in n: return 6
+                if "llama3-70b-8192" in n: return 1
+                if "llama3-8b-8192" in n: return 2
+                if "mixtral-8x7b-32768" in n: return 3
+                if "llama-3.3-70b" in n: return 4
+                if "llama-3.1-70b" in n: return 5
+                if "llama-3.1-8b" in n: return 6
                 if "gemma2-9b" in n: return 7
                 if "qwen" in n: return 8
                 return 20
@@ -505,7 +504,7 @@ if user_input:
             st.session_state.telemetry["last_latency_s"] = elapsed
             st.session_state.telemetry["tokens_est"] += len(user_input.split()) * 2 + len(final_text.split()) * 2
 
-            # Render
+            # Render Outputs
             st.markdown(final_text)
             if generated_plot:
                 st.image(generated_plot, caption="Rendered Visual", use_container_width=True)
