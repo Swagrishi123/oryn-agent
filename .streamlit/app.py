@@ -1,5 +1,5 @@
 import streamlit as st
-import math, re, urllib.parse, requests, io, sys, json, time, base64
+import math, re, urllib.parse, requests, io, sys, json, time, base64, datetime
 import numpy as np
 import matplotlib
 matplotlib.use('Agg')
@@ -151,7 +151,6 @@ if "telemetry" not in st.session_state:
         "breakdown": {"python": 0, "web": 0, "wiki": 0}
     }
 
-# Top reliable models prioritizing tool-use capabilities
 PREFERRED_MODELS = [
     "llama-3.1-8b-instant",
     "llama-3.3-70b-versatile",
@@ -184,7 +183,6 @@ with st.sidebar:
 
     client = Groq(api_key=st.session_state.api_key) if st.session_state.api_key else None
 
-    # Discover account models and sort tool-friendly ones to the top
     available_models = []
     if client:
         try:
@@ -233,6 +231,234 @@ def clean_code_snippet(code: str) -> str:
             continue
         cleaned_lines.append(line)
     return "\n".join(cleaned_lines).strip()
+
+# --- Markdown to HTML Conversion ---
+def markdown_to_clean_html(text: str) -> str:
+    # Convert Headings
+    text = re.sub(r"^### (.*?)$", r"<h3>\1</h3>", text, flags=re.MULTILINE)
+    text = re.sub(r"^## (.*?)$", r"<h2>\1</h2>", text, flags=re.MULTILINE)
+    text = re.sub(r"^# (.*?)$", r"<h1>\1</h1>", text, flags=re.MULTILINE)
+    
+    # Convert Bold and Italic
+    text = re.sub(r"\*\*(.*?)\*\*", r"<strong>\1</strong>", text)
+    text = re.sub(r"\*(.*?)\*", r"<em>\1</em>", text)
+    
+    # Convert Inline Code
+    text = re.sub(r"`(.*?)`", r"<code>\1</code>", text)
+    
+    # Convert Bullet Points
+    lines = text.split("\n")
+    in_list = False
+    html_lines = []
+    
+    for line in lines:
+        line_strip = line.strip()
+        if line_strip.startswith("- ") or line_strip.startswith("* "):
+            if not in_list:
+                html_lines.append("<ul>")
+                in_list = True
+            html_lines.append(f"<li>{line_strip[2:]}</li>")
+        else:
+            if in_list:
+                html_lines.append("</ul>")
+                in_list = False
+            if line_strip:
+                if not line_strip.startswith("<h") and not line_strip.startswith("</"):
+                    html_lines.append(f"<p>{line_strip}</p>")
+            else:
+                html_lines.append("")
+                
+    if in_list:
+        html_lines.append("</ul>")
+        
+    return "\n".join(html_lines)
+
+# --- Executive HTML Report Generator ---
+def build_html_report(text: str, plot_bytes: bytes | None) -> str:
+    current_date = datetime.datetime.now().strftime("%B %d, %Y • %H:%M UTC")
+    
+    img_html = ""
+    if plot_bytes:
+        b64 = base64.b64encode(plot_bytes).decode('utf-8')
+        img_html = f"""
+        <div class="visual-card">
+            <div class="card-label">DATA VISUALIZATION ARTIFACT</div>
+            <img src="data:image/png;base64,{b64}" alt="Generated Visualization" />
+            <div class="caption">Generated deterministically via Python runtime sandbox.</div>
+        </div>
+        """
+
+    formatted_body = markdown_to_clean_html(text)
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ORYN Agent — Intelligence Report</title>
+    <style>
+        :root {{
+            --primary: #4a148c;
+            --primary-light: #f3e8ff;
+            --accent: #7b1fa2;
+            --text-main: #1e1b4b;
+            --text-muted: #64748b;
+            --bg-page: #f8fafc;
+            --bg-card: #ffffff;
+            --border-color: #e2e8f0;
+        }}
+        * {{ box-sizing: border-box; }}
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg-page);
+            color: var(--text-main);
+            margin: 0;
+            padding: 40px 20px;
+            line-height: 1.6;
+        }}
+        .report-wrapper {{
+            max-width: 850px;
+            margin: 0 auto;
+            background: var(--bg-card);
+            border-radius: 16px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.06);
+            border: 1px solid var(--border-color);
+            overflow: hidden;
+        }}
+        .report-header {{
+            background: linear-gradient(135deg, #4a148c, #6a1b9a);
+            color: #ffffff;
+            padding: 36px 40px;
+        }}
+        .badge {{
+            display: inline-block;
+            background: rgba(255, 255, 255, 0.2);
+            color: #ffffff;
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 1px;
+            padding: 4px 10px;
+            border-radius: 20px;
+            margin-bottom: 12px;
+            text-transform: uppercase;
+        }}
+        .report-header h1 {{
+            margin: 0 0 8px 0;
+            font-size: 26px;
+            font-weight: 700;
+            letter-spacing: -0.5px;
+        }}
+        .report-meta {{
+            font-size: 13px;
+            opacity: 0.85;
+        }}
+        .report-body {{
+            padding: 40px;
+        }}
+        h2 {{
+            color: var(--primary);
+            font-size: 20px;
+            margin-top: 28px;
+            margin-bottom: 12px;
+            border-bottom: 1px solid var(--primary-light);
+            padding-bottom: 6px;
+        }}
+        h3 {{
+            color: var(--accent);
+            font-size: 16px;
+            margin-top: 20px;
+            margin-bottom: 8px;
+        }}
+        p {{
+            margin: 0 0 14px 0;
+            font-size: 15px;
+            color: #334155;
+        }}
+        ul {{
+            margin: 0 0 18px 0;
+            padding-left: 20px;
+        }}
+        li {{
+            margin-bottom: 6px;
+            font-size: 15px;
+            color: #334155;
+        }}
+        strong {{
+            color: #0f172a;
+        }}
+        code {{
+            background: var(--primary-light);
+            color: #581c87;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 13px;
+            font-family: Menlo, Consolas, Monaco, monospace;
+        }}
+        .visual-card {{
+            background: #faf5ff;
+            border: 1px solid #e9d5ff;
+            border-radius: 12px;
+            padding: 20px;
+            margin: 28px 0;
+            text-align: center;
+        }}
+        .card-label {{
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.8px;
+            color: var(--accent);
+            margin-bottom: 12px;
+            text-align: left;
+        }}
+        .visual-card img {{
+            max-width: 100%;
+            height: auto;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+            background: white;
+        }}
+        .caption {{
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-top: 10px;
+            font-style: italic;
+        }}
+        .report-footer {{
+            border-top: 1px solid var(--border-color);
+            padding: 20px 40px;
+            font-size: 12px;
+            color: var(--text-muted);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: #fafaf9;
+        }}
+        @media print {{
+            body {{ padding: 0; background: #ffffff; }}
+            .report-wrapper {{ border: none; box-shadow: none; max-width: 100%; }}
+            .report-header {{ padding: 24px; }}
+            .report-body {{ padding: 24px; }}
+        }}
+    </style>
+</head>
+<body>
+    <div class="report-wrapper">
+        <div class="report-header">
+            <div class="badge">Executive Intelligence Summary</div>
+            <h1>Autonomous Analysis & Insights</h1>
+            <div class="report-meta">Generated by ORYN Agent Engine • {current_date}</div>
+        </div>
+        <div class="report-body">
+            {img_html}
+            {formatted_body}
+        </div>
+        <div class="report-footer">
+            <span>Confidential & Deterministic Runtime Output</span>
+            <span>ORYN Agent Architecture</span>
+        </div>
+    </div>
+</body>
+</html>"""
 
 # --- Tool Implementations ---
 def tool_python_interpreter(code: str) -> tuple[str, bytes | None]:
@@ -299,36 +525,6 @@ def tool_wikipedia_search(query: str) -> str:
         return f"No Wikipedia entries found for '{query}'."
     except Exception as e:
         return f"Wikipedia Error: {e}"
-
-def build_html_report(text: str, plot_bytes: bytes | None) -> str:
-    img_tag = ""
-    if plot_bytes:
-        b64 = base64.b64encode(plot_bytes).decode('utf-8')
-        img_tag = f'<div style="text-align:center; margin:20px 0;"><img src="data:image/png;base64,{b64}" style="max-width:100%; border-radius:12px; border:1px solid #ddd;"/></div>'
-    
-    clean_body = text.replace('\n', '<br>')
-    return f"""<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ORYN Agent Executive Report</title>
-    <style>
-        body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 15px auto; max-width: 800px; padding: 15px; color: #2d0b5a; background-color: #faf5ff; }}
-        .card {{ background: white; padding: 20px; border-radius: 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.06); border: 1px solid #e9d5ff; }}
-        h1 {{ color: #4a148c; border-bottom: 2px solid #e9d5ff; padding-bottom: 10px; font-size: 1.4rem; }}
-        .content {{ font-size: 14px; line-height: 1.6; color: #333; }}
-        img {{ max-width: 100%; height: auto; }}
-    </style>
-</head>
-<body>
-    <div class="card">
-        <h1>ORYN Agent — Intelligence Report</h1>
-        {img_tag}
-        <div class="content">{clean_body}</div>
-    </div>
-</body>
-</html>"""
 
 # --- Tool Schemas ---
 AGENT_TOOLS = [
@@ -439,9 +635,17 @@ if user_input:
             "IDENTITY RULES:\n"
             "- Never identify as ChatGPT or state that you were created by OpenAI.\n"
             "- If asked about privacy or your owner, clarify that you are ORYN Agent running an independent session without third-party monitoring.\n"
+            "OUTPUT FORMATTING RULES:\n"
+            "When answering requests, calculations, or data queries, structure your final synthesis into clear sections:\n"
+            "## Executive Summary\n"
+            "A concise 2-3 sentence overview of the findings.\n"
+            "## Key Findings & Data\n"
+            "Bullet points with specific numbers, metrics, or insights.\n"
+            "## Strategic Interpretation\n"
+            "1-2 paragraphs analyzing what this data means and recommending next steps.\n"
             "TOOL RULES:\n"
             "- If the user asks for a chart, graph, plot, or calculation, call `python_interpreter` or output executable Python code.\n"
-            "- Deliver clear, direct answers and concise executive summaries."
+            "- Write clean, robust scripts without comments or markdown wrapping inside tool arguments."
         )
         if pdf_text:
             system_prompt += f"\n\nContext from ingested PDF:\n{pdf_text}"
@@ -474,7 +678,7 @@ if user_input:
                     )
                 except Exception as err:
                     err_msg = str(err).lower()
-                    # If model rejects tool calling (HTTP 400), silently fallback to direct conversation without tools
+                    # Silent fallback: If model does not support tool calling (HTTP 400), invoke directly
                     if "tool" in err_msg or "400" in err_msg or "param" in err_msg:
                         try:
                             response = client.chat.completions.create(
@@ -495,7 +699,7 @@ if user_input:
                 response_message = response.choices[0].message
                 agent_messages.append(response_message)
 
-                # Process Tool Invocations if returned
+                # Process Tool Invocations
                 if getattr(response_message, "tool_calls", None):
                     for tool_call in response_message.tool_calls:
                         step_tool_count += 1
@@ -545,7 +749,7 @@ if user_input:
                     final_text = response_message.content or getattr(response_message, "reasoning", "")
                     break
 
-            # Fallback Interceptor: Execute embedded Python code if model wrote markdown
+            # Fallback Interceptor: Execute inline script if returned in text
             if not generated_plot and ("```python" in final_text or "plt." in final_text):
                 status_container.write("⚡ *Executing inline plot script...*")
                 code_matches = re.findall(r"```(?:python)?\s*(.*?)\s*```", final_text, re.DOTALL)
