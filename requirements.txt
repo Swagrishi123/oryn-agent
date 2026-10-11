@@ -3,3 +3,5 @@ groq
 sympy
 pypdf
 requests
+matplotlib
+duckduckgo-search
