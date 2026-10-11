@@ -187,11 +187,24 @@ with st.sidebar:
 
     client = Groq(api_key=st.session_state.api_key) if st.session_state.api_key else None
 
-    active_model = st.selectbox(
-        "Reasoning Engine:",
-        options=["llama-3.3-70b-versatile", "llama-3.1-8b-instant"],
-        index=0
-    )
+   # Discover models actually enabled on your API key
+    account_models = []
+    if client:
+        try:
+            raw_models = [m.id for m in client.models.list().data]
+            account_models = [m for m in raw_models if "instant" in m or "8b" in m or "70b" in m]
+        except Exception:
+            account_models = []
+
+    fallback_list = ["llama-3.1-8b-instant", "llama3-8b-8192"]
+    available_choices = account_models if account_models else fallback_list
+
+    # Ensure llama-3.1-8b-instant is first
+    if "llama-3.1-8b-instant" in available_choices:
+        available_choices.remove("llama-3.1-8b-instant")
+        available_choices.insert(0, "llama-3.1-8b-instant")
+
+    active_model = st.selectbox("Reasoning Engine:", options=available_choices, index=0)
     hitl_enabled = st.toggle("🛡️ HITL Safety Guardrails", value=True)
 
     st.markdown("---")
@@ -663,7 +676,20 @@ if user_input:
                     )
                 except Exception as err:
                     err_str = str(err).lower()
-                    if "tool" in err_str or "400" in err_str:
+                    if "404" in err_str or "model_not_found" in err_str:
+                        status_container.write("⚠️ Model unavailable. Rerouting to `llama-3.1-8b-instant`...")
+                        try:
+                            response = client.chat.completions.create(
+                                model="llama-3.1-8b-instant",
+                                messages=agent_messages,
+                                tools=AGENT_TOOLS,
+                                tool_choice="auto",
+                                max_tokens=900
+                            )
+                        except Exception as inner_err:
+                            final_text = f"Groq Engine Error: {inner_err}"
+                            break
+                    elif "tool" in err_str or "400" in err_str:
                         response = client.chat.completions.create(
                             model=active_model,
                             messages=agent_messages,
