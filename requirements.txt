@@ -1,5 +1,6 @@
 streamlit
 groq
+google-genai
 matplotlib
 numpy
 pandas
