@@ -186,7 +186,6 @@ with st.sidebar:
 
     client = Groq(api_key=st.session_state.api_key) if st.session_state.api_key else None
 
-    # Discover live active models dynamically
     discovered_models = []
     if client:
         try:
@@ -308,7 +307,7 @@ def build_html_report(text: str, plot_bytes: bytes | None) -> str:
 </body>
 </html>"""
 
-# --- High-Performance Python Sandbox ---
+# --- Python Sandbox ---
 def tool_python_interpreter(code: str) -> tuple[str, bytes | None, bytes | None]:
     code = clean_code_snippet(code)
     if hitl_enabled:
@@ -333,7 +332,6 @@ def tool_python_interpreter(code: str) -> tuple[str, bytes | None, bytes | None]
         sys.stdout = stdout_trap
         exec("import math\nimport sympy\nimport numpy as np\nimport pandas as pd\nimport matplotlib.pyplot as plt\n" + code, scope)
         
-        # Check for figure
         if plt.get_fignums():
             fig_buf = io.BytesIO()
             plt.gcf().savefig(fig_buf, format="png", bbox_inches="tight", dpi=140)
@@ -341,7 +339,6 @@ def tool_python_interpreter(code: str) -> tuple[str, bytes | None, bytes | None]
             plot_bytes = fig_buf.getvalue()
             plt.close('all')
 
-        # Check for DataFrame to export Excel
         for var_name, var_val in scope.items():
             if isinstance(var_val, pd.DataFrame) and not var_name.startswith("_"):
                 x_buf = io.BytesIO()
@@ -359,20 +356,17 @@ def tool_python_interpreter(code: str) -> tuple[str, bytes | None, bytes | None]
     finally:
         sys.stdout = sys_stdout_backup
 
-# --- Fast Market Data Tool (Using fast_info to prevent hanging) ---
+# --- Domain Tools ---
 def tool_get_financial_data(ticker: str, data_type: str = "summary") -> str:
     try:
         sym = ticker.strip().upper()
         t = yf.Ticker(sym)
-        
-        # Use fast_info (< 0.2s latency)
         fi = t.fast_info
         price = getattr(fi, 'last_price', None) or getattr(fi, 'previous_close', 'N/A')
         mcap = getattr(fi, 'market_cap', None)
         fifty_high = getattr(fi, 'year_high', 'N/A')
         fifty_low = getattr(fi, 'year_low', 'N/A')
         
-        # Format Market Cap
         mcap_str = f"${mcap:,.0f}" if isinstance(mcap, (int, float)) else "N/A"
         price_str = f"${price:.2f}" if isinstance(price, (int, float)) else str(price)
 
@@ -409,17 +403,6 @@ def tool_web_search(query: str) -> str:
         if not results: return f"No web results for '{query}'."
         return "\n".join([f"• [{r.get('title', '')}]: {r.get('body', '')[:280]}" for r in results])
     except Exception as e: return f"Search Error: {e}"
-
-def tool_wikipedia_search(query: str) -> str:
-    try:
-        url = f"[https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=](https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=){urllib.parse.quote(query)}&utf8=&format=json"
-        res = requests.get(url, headers={"User-Agent": "ORYN-Analyst/3.0"}, timeout=4).json()
-        hits = res.get("query", {}).get("search", [])
-        if hits:
-            clean = re.sub(r"<[^>]+>", "", hits[0].get("snippet", ""))
-            return f"Wikipedia [{hits[0].get('title')}]: {clean}"
-        return f"No Wikipedia entries for '{query}'."
-    except Exception as e: return f"Wiki Error: {e}"
 
 def tool_update_working_memory(fact: str) -> str:
     st.session_state.working_memory.append(fact.strip())
@@ -558,7 +541,7 @@ for idx, msg in enumerate(st.session_state.messages):
             st.download_button("📥 Download Summary (.txt)", msg["content"], f"memo_{idx}.txt", "text/plain", key=f"dl_t_{idx}", use_container_width=True)
 
 # --- User Input & Autonomous Execution Loop ---
-user_input = st.chat_input("Ask ORYN Analyst (e.g. compare AAPL vs MSFT, calculate growth curve)...")
+user_input = st.chat_input("Ask ORYN Analyst...")
 
 if user_input:
     start_time = time.perf_counter()
@@ -572,15 +555,9 @@ if user_input:
     else:
         system_prompt = (
             "You are ORYN Analyst, an autonomous quantitative and market intelligence analyst built by Mriganka.\n"
-            "IDENTITY RULES:\n"
-            "- Never identify as ChatGPT or state you were created by OpenAI.\n"
-            "EXECUTION DIRECTIVES:\n"
-            "1. When asked to compare tickers, call `get_financial_data` for each ticker, then IMMEDIATELY call `python_interpreter` to build DataFrame `df` and plot the chart.\n"
-            "2. After executing tools, synthesize a structured report with:\n"
-            "## Executive Summary\n"
-            "## Key Financial & Quantitative Insights\n"
-            "## Strategic Recommendations\n"
-            "Never stop without writing this final executive report."
+            "BEHAVIOR RULES:\n"
+            "- For general knowledge, direct questions, or simple chat, answer DIRECTLY and concisely without forcing financial sections.\n"
+            "- When asked for financial research, comparisons, or modeling, call the relevant tools and deliver a complete executive briefing."
         )
 
         if st.session_state.working_memory:
@@ -594,7 +571,7 @@ if user_input:
                 agent_messages.append({"role": m["role"], "content": m["content"]})
 
         with st.chat_message("assistant"):
-            status_container = st.status("🧠 ORYN Analyst is reasoning & executing...", expanded=True)
+            status_container = st.status("🧠 ORYN Analyst is reasoning...", expanded=True)
             max_iterations = 6
             iteration = 0
             final_text = ""
@@ -682,12 +659,12 @@ if user_input:
                     final_text = response_message.content or ""
                     break
 
-            # Guaranteed Synthesis: If agent finished tools but didn't write briefing, force synthesis now
-            if not final_text or len(final_text.strip()) < 40:
-                status_container.write("📝 *Synthesizing executive briefing & takeaways...*")
+            # Only trigger synthesis if tools ran in THIS turn and no text was produced
+            if step_tool_count > 0 and (not final_text or len(final_text.strip()) == 0):
+                status_container.write("📝 *Synthesizing briefing...*")
                 agent_messages.append({
                     "role": "user",
-                    "content": "Synthesize a full, detailed executive briefing based on all tool outputs and calculations above. Structure with: ## Executive Summary, ## Key Financial & Quantitative Insights, and ## Strategic Recommendations. Do not call any tools."
+                    "content": "Synthesize a structured executive briefing based on the tool outputs above. Do not call any tools."
                 })
                 try:
                     synth_resp = client.chat.completions.create(
@@ -699,7 +676,7 @@ if user_input:
                 except Exception as e:
                     final_text = f"Synthesis note: {e}"
 
-            # Fallback code interceptor if model put script in text
+            # Fallback code interceptor
             if not generated_plot and ("```python" in final_text or "plt." in final_text):
                 status_container.write("⚡ *Executing inline plot script...*")
                 code_matches = re.findall(r"```(?:python)?\s*(.*?)\s*```", final_text, re.DOTALL)
@@ -709,7 +686,7 @@ if user_input:
                 if x_bytes: generated_excel = x_bytes
 
             elapsed = time.perf_counter() - start_time
-            status_container.update(label=f"✅ Analysis Complete ({elapsed:.2f}s)", state="complete", expanded=False)
+            status_container.update(label=f"✅ Complete ({elapsed:.2f}s)", state="complete", expanded=False)
 
             # Update Telemetry
             st.session_state.telemetry["queries"] += 1
