@@ -10,63 +10,72 @@ import sympy
 from sympy import symbols, Symbol, Eq, solve, simplify, Rational
 from duckduckgo_search import DDGS
 
-# --- Page Configuration ---
+# --- Page Configuration (Mobile-Optimized) ---
 st.set_page_config(
     page_title="ORYN Agent — Unified",
     page_icon="✦",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="auto"  # Automatically collapses on mobile screens to show chat immediately
 )
 
-# --- Custom Gemini Purple UI Styling ---
+# --- Responsive Purple UI & Mobile-First UX Styling ---
 st.markdown("""
 <style>
+    /* Global Container */
     .stApp {
         background-color: #ffffff !important;
         font-family: 'Google Sans', -apple-system, BlinkMacSystemFont, sans-serif;
     }
+    
+    /* Header Bar */
     .oryn-header {
         position: sticky;
         top: 0;
         z-index: 999;
         background: rgba(255, 255, 255, 0.98);
         backdrop-filter: blur(10px);
-        padding: 14px 0 8px 0;
+        padding: 12px 10px 8px 10px;
         border-bottom: 1px solid rgba(74, 20, 140, 0.1);
         text-align: center;
-        margin-bottom: 20px;
+        margin-bottom: 16px;
     }
     .oryn-brand {
         display: inline-flex;
         align-items: center;
-        gap: 12px;
+        justify-content: center;
+        gap: 10px;
     }
     .oryn-title {
-        font-size: 2.2rem;
+        font-size: 1.8rem;
         font-weight: 800;
         color: #4a148c !important;
         margin: 0;
+        letter-spacing: -0.5px;
     }
     .oryn-subtitle {
         color: #7b1fa2 !important;
-        font-size: 0.9rem;
+        font-size: 0.85rem;
         font-weight: 500;
         margin: 4px 0 0 0;
     }
+
+    /* Chat Messages */
     div[data-testid="stChatMessage"]:has(div[data-testid="stChatMessageAvatarUser"]) {
         background-color: #f3e8ff !important;
-        border-radius: 18px !important;
-        padding: 12px 18px !important;
+        border-radius: 16px !important;
+        padding: 12px 16px !important;
         border: 1px solid #e9d5ff !important;
+        margin-bottom: 8px !important;
     }
     div[data-testid="stChatMessage"]:has(div[data-testid="stChatMessageAvatarUser"]) * {
         color: #6b21a8 !important;
     }
     div[data-testid="stChatMessage"]:has(div[data-testid="stChatMessageAvatarAssistant"]) {
         background-color: #faf5ff !important;
-        border-radius: 18px !important;
-        padding: 14px 20px !important;
+        border-radius: 16px !important;
+        padding: 14px 18px !important;
         border: 1px solid #f3e8ff !important;
+        margin-bottom: 8px !important;
     }
     div[data-testid="stChatMessage"]:has(div[data-testid="stChatMessageAvatarAssistant"]) *,
     div[data-testid="stChatMessage"]:has(div[data-testid="stChatMessageAvatarAssistant"]) p,
@@ -74,12 +83,75 @@ st.markdown("""
         color: #4a148c !important;
         font-weight: 500;
     }
+    
+    /* Code Blocks */
     code {
         background-color: #ede9fe !important;
         color: #581c87 !important;
         font-weight: 600 !important;
         padding: 2px 6px !important;
         border-radius: 4px !important;
+        word-break: break-word !important;
+    }
+    
+    /* Buttons & Touch Targets */
+    .stDownloadButton button, .stButton button {
+        min-height: 44px !important;
+        border-radius: 10px !important;
+        font-weight: 600 !important;
+        border: 1px solid #e9d5ff !important;
+        transition: all 0.2s ease !important;
+    }
+    .stDownloadButton button:hover, .stButton button:hover {
+        border-color: #7b1fa2 !important;
+        background-color: #f3e8ff !important;
+    }
+
+    /* Mobile Screen Adjustments (max-width: 768px) */
+    @media screen and (max-width: 768px) {
+        .block-container {
+            padding-top: 1.5rem !important;
+            padding-bottom: 4rem !important;
+            padding-left: 0.8rem !important;
+            padding-right: 0.8rem !important;
+        }
+        .oryn-header {
+            padding: 8px 4px 6px 4px !important;
+            margin-bottom: 10px !important;
+        }
+        .oryn-title {
+            font-size: 1.35rem !important;
+        }
+        .oryn-subtitle {
+            font-size: 0.72rem !important;
+            line-height: 1.2 !important;
+        }
+        .oryn-brand svg {
+            width: 24px !important;
+            height: 24px !important;
+        }
+        div[data-testid="stChatMessage"] {
+            padding: 10px 12px !important;
+            border-radius: 12px !important;
+        }
+        div[data-testid="stChatMessage"] * {
+            font-size: 0.92rem !important;
+            line-height: 1.45 !important;
+        }
+        /* Stack download buttons cleanly on mobile */
+        div[data-testid="column"] {
+            width: 100% !important;
+            flex: 1 1 100% !important;
+            min-width: 100% !important;
+        }
+        .stDownloadButton button {
+            width: 100% !important;
+            margin-bottom: 8px !important;
+        }
+        /* Keep status drawer readable */
+        div[data-testid="stExpander"] {
+            margin-bottom: 8px !important;
+        }
     }
 </style>
 """, unsafe_allow_html=True)
@@ -88,7 +160,7 @@ st.markdown("""
 st.markdown("""
 <div class="oryn-header">
     <div class="oryn-brand">
-        <svg width="32" height="32" viewBox="0 0 24 24" fill="#4a148c" xmlns="http://www.w3.org/2000/svg">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="#4a148c" xmlns="http://www.w3.org/2000/svg">
             <path d="M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.771-4.2057 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7467-7.0731zM13.2599 22.4042a4.4568 4.4568 0 0 1-2.9001-1.0543l.1422-.0818 4.811-2.778a.791.791 0 0 0 .3955-.6855v-6.786l2.1643 1.25a.1582.1582 0 0 1 .0791.137v5.545a4.4628 4.4628 0 0 1-4.692 4.4536zM3.8205 18.0645a4.4568 4.4568 0 0 1-.5157-3.0568l.1422.0853 4.811 2.778a.791.791 0 0 0 .791 0l5.8753-3.3934v2.5a.1582.1582 0 0 1-.0791.137l-4.8 2.7717a4.4628 4.4628 0 0 1-6.2247-1.8218zm-1.8218-9.4264a4.4568 4.4568 0 0 1 2.3844-2.0025v5.7176a.791.791 0 0 0 .3955.6855l5.8753 3.3934-2.1643 1.25a.1582.1582 0 0 1-.1582 0l-4.8-2.7717a4.4628 4.4628 0 0 1-1.5327-6.2723zm13.931-1.0543-5.8753-3.3934 2.1643-1.25a.1582.1582 0 0 1 .1582 0l4.8 2.7717a4.4628 4.4628 0 0 1-.5157 8.5292v-5.972a.791.791 0 0 0-.7315-.6855zm3.8205 6.3686a4.4568 4.4568 0 0 1 .5157 3.0568l-.1422-.0853-4.811-2.778a.791.791 0 0 0-.791 0l-5.8753 3.3934v-2.5a.1582.1582 0 0 1 .0791-.137l4.8-2.7717a4.4628 4.4628 0 0 1 6.2247 1.8218zM10.7401 13.0847l-2.6105-1.507 2.6105-1.507 2.6105 1.507z"/>
         </svg>
         <h1 class="oryn-title">ORYN AGENT</h1>
@@ -257,12 +329,14 @@ def build_html_report(text: str, plot_bytes: bytes | None) -> str:
 <html>
 <head>
     <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ORYN Agent Executive Report</title>
     <style>
-        body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 30px auto; max-width: 800px; padding: 20px; color: #2d0b5a; background-color: #faf5ff; }}
-        .card {{ background: white; padding: 30px; border-radius: 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.06); border: 1px solid #e9d5ff; }}
-        h1 {{ color: #4a148c; border-bottom: 2px solid #e9d5ff; padding-bottom: 10px; }}
-        .content {{ font-size: 15px; line-height: 1.6; color: #333; }}
+        body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 15px auto; max-width: 800px; padding: 15px; color: #2d0b5a; background-color: #faf5ff; }}
+        .card {{ background: white; padding: 20px; border-radius: 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.06); border: 1px solid #e9d5ff; }}
+        h1 {{ color: #4a148c; border-bottom: 2px solid #e9d5ff; padding-bottom: 10px; font-size: 1.4rem; }}
+        .content {{ font-size: 14px; line-height: 1.6; color: #333; }}
+        img {{ max-width: 100%; height: auto; }}
     </style>
 </head>
 <body>
@@ -342,16 +416,18 @@ for idx, msg in enumerate(st.session_state.messages):
                     data=msg["image"],
                     file_name=f"oryn_chart_{idx}.png",
                     mime="image/png",
-                    key=f"dl_png_hist_{idx}"
+                    key=f"dl_png_hist_{idx}",
+                    use_container_width=True
                 )
             with col_d2:
                 html_doc = build_html_report(msg["content"], msg["image"])
                 st.download_button(
-                    label="📑 Download Report with Graph (.html)",
+                    label="📑 Download Report (.html)",
                     data=html_doc,
                     file_name=f"oryn_report_{idx}.html",
                     mime="text/html",
-                    key=f"dl_html_hist_{idx}"
+                    key=f"dl_html_hist_{idx}",
+                    use_container_width=True
                 )
         elif msg.get("download"):
             st.download_button(
@@ -359,7 +435,8 @@ for idx, msg in enumerate(st.session_state.messages):
                 data=msg["content"],
                 file_name=f"oryn_report_{idx}.txt",
                 mime="text/plain",
-                key=f"dl_text_hist_{idx}"
+                key=f"dl_text_hist_{idx}",
+                use_container_width=True
             )
 
 # --- User Input & Resilient ReAct Engine ---
@@ -376,10 +453,14 @@ if user_input:
             st.error("Please provide a Groq API Key in the sidebar or via Streamlit Secrets.")
     else:
         system_prompt = (
-            "You are ORYN Agent, an autonomous problem solver.\n"
-            "If the user asks for a chart, graph, plot, or calculation, call `python_interpreter`. "
-            "Write executable Python code in the tool call arguments without markdown formatting. "
-            "After calling tools, synthesize a detailed executive summary answering all aspects of the user's request."
+            "You are ORYN Agent, an independent autonomous AI system built by Mriganka.\n"
+            "IDENTITY RULES:\n"
+            "- Never identify as ChatGPT or state that you were created by OpenAI.\n"
+            "- If asked about privacy or your owner, clarify that you are ORYN Agent running an independent session without third-party monitoring.\n"
+            "TOOL RULES:\n"
+            "- If the user asks for a chart, graph, plot, or calculation, call `python_interpreter`.\n"
+            "- Write executable Python code in the tool call arguments without markdown formatting.\n"
+            "- After calling tools, synthesize a detailed executive summary answering all aspects of the user's request."
         )
         if pdf_text:
             system_prompt += f"\n\nContext from ingested PDF:\n{pdf_text}"
@@ -463,7 +544,7 @@ if user_input:
                     final_text = response_message.content or getattr(response_message, "reasoning", "")
                     break
 
-            # Fallback 1: If tool loop hit iteration cap without a concluding message, force executive synthesis
+            # Fallback 1: Force executive synthesis if iteration limit is hit without a conclusion
             if not final_text:
                 status_container.write("📝 *Synthesizing executive summary...*")
                 agent_messages.append({
@@ -510,16 +591,18 @@ if user_input:
                         data=generated_plot,
                         file_name="oryn_chart.png",
                         mime="image/png",
-                        key=f"dl_live_png_{len(st.session_state.messages)}"
+                        key=f"dl_live_png_{len(st.session_state.messages)}",
+                        use_container_width=True
                     )
                 with col_d2:
                     html_report = build_html_report(final_text, generated_plot)
                     st.download_button(
-                        label="📑 Download Report with Graph (.html)",
+                        label="📑 Download Report (.html)",
                         data=html_report,
                         file_name="oryn_executive_report.html",
                         mime="text/html",
-                        key=f"dl_live_html_{len(st.session_state.messages)}"
+                        key=f"dl_live_html_{len(st.session_state.messages)}",
+                        use_container_width=True
                     )
             else:
                 st.download_button(
@@ -527,7 +610,8 @@ if user_input:
                     data=final_text,
                     file_name="oryn_report.txt",
                     mime="text/plain",
-                    key=f"dl_live_txt_{len(st.session_state.messages)}"
+                    key=f"dl_live_txt_{len(st.session_state.messages)}",
+                    use_container_width=True
                 )
 
             st.session_state.messages.append({
