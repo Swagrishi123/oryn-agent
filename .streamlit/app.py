@@ -15,19 +15,17 @@ st.set_page_config(
     page_title="ORYN Agent — Unified",
     page_icon="✦",
     layout="wide",
-    initial_sidebar_state="auto"  # Automatically collapses on mobile screens to show chat immediately
+    initial_sidebar_state="auto"
 )
 
 # --- Responsive Purple UI & Mobile-First UX Styling ---
 st.markdown("""
 <style>
-    /* Global Container */
     .stApp {
         background-color: #ffffff !important;
         font-family: 'Google Sans', -apple-system, BlinkMacSystemFont, sans-serif;
     }
     
-    /* Header Bar */
     .oryn-header {
         position: sticky;
         top: 0;
@@ -59,7 +57,6 @@ st.markdown("""
         margin: 4px 0 0 0;
     }
 
-    /* Chat Messages */
     div[data-testid="stChatMessage"]:has(div[data-testid="stChatMessageAvatarUser"]) {
         background-color: #f3e8ff !important;
         border-radius: 16px !important;
@@ -84,7 +81,6 @@ st.markdown("""
         font-weight: 500;
     }
     
-    /* Code Blocks */
     code {
         background-color: #ede9fe !important;
         color: #581c87 !important;
@@ -94,7 +90,6 @@ st.markdown("""
         word-break: break-word !important;
     }
     
-    /* Buttons & Touch Targets */
     .stDownloadButton button, .stButton button {
         min-height: 44px !important;
         border-radius: 10px !important;
@@ -107,7 +102,6 @@ st.markdown("""
         background-color: #f3e8ff !important;
     }
 
-    /* Mobile Screen Adjustments (max-width: 768px) */
     @media screen and (max-width: 768px) {
         .block-container {
             padding-top: 1.5rem !important;
@@ -138,7 +132,6 @@ st.markdown("""
             font-size: 0.92rem !important;
             line-height: 1.45 !important;
         }
-        /* Stack download buttons cleanly on mobile */
         div[data-testid="column"] {
             width: 100% !important;
             flex: 1 1 100% !important;
@@ -148,7 +141,6 @@ st.markdown("""
             width: 100% !important;
             margin-bottom: 8px !important;
         }
-        /* Keep status drawer readable */
         div[data-testid="stExpander"] {
             margin-bottom: 8px !important;
         }
@@ -185,6 +177,16 @@ if "telemetry" not in st.session_state:
         "breakdown": {"python": 0, "web": 0, "wiki": 0}
     }
 
+# Models officially supporting Groq tool calling
+VERIFIED_TOOL_MODELS = [
+    "llama-3.3-70b-versatile",
+    "llama-3.1-8b-instant",
+    "llama-3.1-70b-versatile",
+    "llama3-70b-8192",
+    "llama3-8b-8192",
+    "mixtral-8x7b-32768"
+]
+
 # --- Sidebar Controls ---
 with st.sidebar:
     st.header("⚙️ Agent Controls")
@@ -200,18 +202,17 @@ with st.sidebar:
 
     client = Groq(api_key=st.session_state.api_key) if st.session_state.api_key else None
 
-    # Discover and populate models
+    # Filter available models strictly for tool-calling models
     usable_models = []
     if client:
         try:
-            raw_models = [m.id for m in client.models.list().data]
-            banned = ["whisper", "guard", "vision", "embed", "safeguard", "orpheus", "canopy", "audio", "tts"]
-            usable_models = [m for m in raw_models if not any(b in m.lower() for b in banned)]
+            account_models = [m.id for m in client.models.list().data]
+            usable_models = [m for m in VERIFIED_TOOL_MODELS if m in account_models]
         except Exception:
             usable_models = []
 
     if not usable_models:
-        usable_models = ["llama-3.3-70b-versatile", "llama3-70b-8192", "mixtral-8x7b-32768", "llama-3.1-8b-instant"]
+        usable_models = VERIFIED_TOOL_MODELS
 
     active_model = st.selectbox("Active Model Engine:", options=usable_models, index=0)
     hitl_enabled = st.toggle("🛡️ HITL Safety Guardrails", value=True)
@@ -241,7 +242,6 @@ with st.sidebar:
 
 # --- Sanitization Helper ---
 def clean_code_snippet(code: str) -> str:
-    """Strips markdown fences, backticks, and plt.show() from model code outputs."""
     cleaned_lines = []
     for line in code.strip().splitlines():
         trimmed = line.strip()
@@ -471,7 +471,7 @@ if user_input:
                 agent_messages.append({"role": m["role"], "content": m["content"]})
 
         with st.chat_message("assistant"):
-            status_container = st.status("🧠 ORYN Agent is planning & executing tools...", expanded=True)
+            status_container = st.status("🧠 ORYN Agent is planning & executing...", expanded=True)
             max_iterations = 4
             iteration = 0
             final_text = ""
@@ -489,8 +489,22 @@ if user_input:
                         max_tokens=850
                     )
                 except Exception as err:
-                    final_text = f"Groq Engine Error: {err}"
-                    break
+                    err_str = str(err).lower()
+                    # Resilient Auto-Fallback: If the selected model cannot accept tools, call without tools
+                    if "tool calling is not supported" in err_str or "param': 'tool calling'" in err_str:
+                        status_container.write("ℹ️ Model does not support tool calling. Switching to direct response...")
+                        try:
+                            response = client.chat.completions.create(
+                                model=active_model,
+                                messages=agent_messages,
+                                max_tokens=850
+                            )
+                        except Exception as inner_err:
+                            final_text = f"Groq Engine Error: {inner_err}"
+                            break
+                    else:
+                        final_text = f"Groq Engine Error: {err}"
+                        break
 
                 response_message = response.choices[0].message
                 agent_messages.append(response_message)
@@ -544,7 +558,7 @@ if user_input:
                     final_text = response_message.content or getattr(response_message, "reasoning", "")
                     break
 
-            # Fallback 1: Force executive synthesis if iteration limit is hit without a conclusion
+            # Force executive synthesis if iteration limit hit without conclusion
             if not final_text:
                 status_container.write("📝 *Synthesizing executive summary...*")
                 agent_messages.append({
@@ -561,7 +575,7 @@ if user_input:
                 except Exception as e:
                     final_text = f"Synthesis note: Calculations executed. Summary error: {e}"
 
-            # Fallback 2: Execute inline code blocks if generated
+            # Fallback code interceptor if model output raw markdown
             if not generated_plot and ("```python" in final_text or "plt." in final_text):
                 status_container.write("⚡ *Executing inline plot script...*")
                 code_matches = re.findall(r"```(?:python)?\s*(.*?)\s*```", final_text, re.DOTALL)
