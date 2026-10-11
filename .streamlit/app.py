@@ -492,25 +492,46 @@ with st.expander("📎 Multimodal Data Room (PDF / Images)", expanded=False):
         if uploaded_img and not st.session_state.image_insights:
             if client:
                 with st.spinner("🧠 Vision Model inspecting image..."):
+                    img_bytes = uploaded_img.getvalue()
+                    b64_img = base64.b64encode(img_bytes).decode('utf-8')
+
+                    # Discover all active vision-capable models dynamically
+                    available_vision_models = []
                     try:
-                        img_bytes = uploaded_img.getvalue()
-                        b64_img = base64.b64encode(img_bytes).decode('utf-8')
-                        vision_resp = client.chat.completions.create(
-                            model="llama-3.2-11b-vision-preview",
-                            messages=[
-                                {
-                                    "role": "user",
-                                    "content": [
-                                        {"type": "text", "text": "Extract all numerical tables and metrics with high precision."},
-                                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64_img}"}}
-                                    ]
-                                }
-                            ]
-                        )
-                        st.session_state.image_insights = vision_resp.choices[0].message.content
-                        st.success("Image parsed into Agent Memory.")
-                    except Exception as err:
-                        st.error(f"Vision Parsing error: {err}")
+                        raw_models = [m.id for m in client.models.list().data]
+                        available_vision_models = [m for m in raw_models if "vision" in m.lower() and "preview" not in m.lower()]
+                        if not available_vision_models:
+                            available_vision_models = [m for m in raw_models if "vision" in m.lower()]
+                    except Exception:
+                        available_vision_models = []
+
+                    fallback_vision = ["llama-3.2-11b-vision", "llama-3.2-90b-vision"]
+                    vision_candidates = available_vision_models if available_vision_models else fallback_vision
+
+                    parsed_successfully = False
+                    for v_model in vision_candidates:
+                        try:
+                            vision_resp = client.chat.completions.create(
+                                model=v_model,
+                                messages=[
+                                    {
+                                        "role": "user",
+                                        "content": [
+                                            {"type": "text", "text": "Extract all numerical tables, trendlines, and metrics from this image with high precision."},
+                                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64_img}"}}
+                                        ]
+                                    }
+                                ]
+                            )
+                            st.session_state.image_insights = vision_resp.choices[0].message.content
+                            st.success(f"Image parsed into Agent Memory using `{v_model}`.")
+                            parsed_successfully = True
+                            break
+                        except Exception:
+                            continue
+
+                    if not parsed_successfully:
+                        st.warning("⚠️ No active vision models currently enabled on this Groq API key tier. You can still paste values directly into chat.")
             else:
                 st.warning("Provide Groq API key first.")
 
@@ -659,7 +680,7 @@ if user_input:
                     final_text = response_message.content or ""
                     break
 
-            # Only trigger synthesis if tools ran in THIS turn and no text was produced
+            # Only synthesize if tools were called in THIS turn and no message body was generated
             if step_tool_count > 0 and (not final_text or len(final_text.strip()) == 0):
                 status_container.write("📝 *Synthesizing briefing...*")
                 agent_messages.append({
