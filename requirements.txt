@@ -1,7 +1,12 @@
 streamlit
 groq
+matplotlib
+numpy
+pandas
+openpyxl
+yfinance
 sympy
 pypdf
-requests
-matplotlib
 duckduckgo-search
+pillow
+requests
