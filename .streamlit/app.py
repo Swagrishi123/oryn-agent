@@ -187,24 +187,20 @@ with st.sidebar:
 
     client = Groq(api_key=st.session_state.api_key) if st.session_state.api_key else None
 
-   # Discover models actually enabled on your API key
-    account_models = []
+    # Dynamically discover active models from your key
+    discovered_models = []
     if client:
         try:
             raw_models = [m.id for m in client.models.list().data]
-            account_models = [m for m in raw_models if "instant" in m or "8b" in m or "70b" in m]
+            banned = ["whisper", "guard", "embed", "safeguard", "orpheus", "canopy", "audio", "tts"]
+            discovered_models = [m for m in raw_models if not any(b in m.lower() for b in banned)]
         except Exception:
-            account_models = []
+            discovered_models = []
 
-    fallback_list = ["llama-3.1-8b-instant", "llama3-8b-8192"]
-    available_choices = account_models if account_models else fallback_list
+    if not discovered_models:
+        discovered_models = ["qwen-2.5-32b", "llama-3.3-70b-versatile", "mixtral-8x7b-32768"]
 
-    # Ensure llama-3.1-8b-instant is first
-    if "llama-3.1-8b-instant" in available_choices:
-        available_choices.remove("llama-3.1-8b-instant")
-        available_choices.insert(0, "llama-3.1-8b-instant")
-
-    active_model = st.selectbox("Reasoning Engine:", options=available_choices, index=0)
+    active_model = st.selectbox("Reasoning Engine:", options=discovered_models, index=0)
     hitl_enabled = st.toggle("🛡️ HITL Safety Guardrails", value=True)
 
     st.markdown("---")
@@ -237,9 +233,7 @@ def clean_code_snippet(code: str) -> str:
     cleaned_lines = []
     for line in code.strip().splitlines():
         trimmed = line.strip()
-        if trimmed.startswith("```"):
-            continue
-        if "plt.show()" in trimmed:
+        if trimmed.startswith("```") or "plt.show()" in trimmed:
             continue
         cleaned_lines.append(line)
     return "\n".join(cleaned_lines).strip()
@@ -340,7 +334,6 @@ def tool_python_interpreter(code: str) -> tuple[str, bytes | None, bytes | None]
         sys.stdout = stdout_trap
         exec("import math\nimport sympy\nimport numpy as np\nimport pandas as pd\nimport matplotlib.pyplot as plt\n" + code, scope)
         
-        # Capture Matplotlib Plot
         if plt.get_fignums():
             fig_buf = io.BytesIO()
             plt.gcf().savefig(fig_buf, format="png", bbox_inches="tight", dpi=140)
@@ -348,7 +341,6 @@ def tool_python_interpreter(code: str) -> tuple[str, bytes | None, bytes | None]
             plot_bytes = fig_buf.getvalue()
             plt.close('all')
 
-        # Capture DataFrame to Excel
         for var_name, var_val in scope.items():
             if isinstance(var_val, pd.DataFrame) and not var_name.startswith("_"):
                 x_buf = io.BytesIO()
@@ -366,7 +358,7 @@ def tool_python_interpreter(code: str) -> tuple[str, bytes | None, bytes | None]
     finally:
         sys.stdout = sys_stdout_backup
 
-# --- Domain Tools: Financial, Web, Document Search ---
+# --- Domain Tools ---
 def tool_get_financial_data(ticker: str, data_type: str = "summary") -> str:
     try:
         t = yf.Ticker(ticker.strip().upper())
@@ -560,7 +552,6 @@ for idx, msg in enumerate(st.session_state.messages):
     with st.chat_message(msg.get("role", "assistant")):
         st.markdown(msg.get("content", ""))
         
-        # Display image artifact if present
         if msg.get("image"):
             st.image(msg["image"], caption="Data Visualization", use_container_width=True)
             
@@ -664,40 +655,47 @@ if user_input:
             generated_excel = None
             step_tool_count = 0
 
+            # Safe execution candidate cascade
+            candidate_models = [active_model] + [m for m in discovered_models if m != active_model]
+            current_model = active_model
+
             while iteration < max_iterations:
                 iteration += 1
-                try:
-                    response = client.chat.completions.create(
-                        model=active_model,
-                        messages=agent_messages,
-                        tools=AGENT_TOOLS,
-                        tool_choice="auto",
-                        max_tokens=900
-                    )
-                except Exception as err:
-                    err_str = str(err).lower()
-                    if "404" in err_str or "model_not_found" in err_str:
-                        status_container.write("⚠️ Model unavailable. Rerouting to `llama-3.1-8b-instant`...")
-                        try:
-                            response = client.chat.completions.create(
-                                model="llama-3.1-8b-instant",
-                                messages=agent_messages,
-                                tools=AGENT_TOOLS,
-                                tool_choice="auto",
-                                max_tokens=900
-                            )
-                        except Exception as inner_err:
-                            final_text = f"Groq Engine Error: {inner_err}"
-                            break
-                    elif "tool" in err_str or "400" in err_str:
+                response = None
+                
+                # Attempt with tools first, then clean chat fallback
+                for candidate in candidate_models:
+                    try:
                         response = client.chat.completions.create(
-                            model=active_model,
+                            model=candidate,
                             messages=agent_messages,
+                            tools=AGENT_TOOLS,
+                            tool_choice="auto",
                             max_tokens=900
                         )
-                    else:
-                        final_text = f"Groq Engine Error: {err}"
+                        current_model = candidate
                         break
+                    except Exception as err:
+                        err_str = str(err).lower()
+                        # If tool calling isn't supported on this candidate, fall back to pure chat
+                        if any(k in err_str for k in ["tool", "400", "not supported", "badrequest"]):
+                            try:
+                                clean_chat_msgs = [m for m in agent_messages if m.get("role") in ["system", "user", "assistant"]]
+                                response = client.chat.completions.create(
+                                    model=candidate,
+                                    messages=clean_chat_msgs,
+                                    max_tokens=900
+                                )
+                                current_model = candidate
+                                break
+                            except Exception:
+                                continue
+                        else:
+                            continue
+
+                if not response:
+                    final_text = "All available model engines failed to process the request. Please check your API key status."
+                    break
 
                 response_message = response.choices[0].message
                 agent_messages.append(response_message)
