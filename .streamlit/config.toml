@@ -4,3 +4,8 @@ primaryColor = "#4a148c"
 backgroundColor = "#ffffff"
 secondaryBackgroundColor = "#faf5ff"
 textColor = "#4a148c"
+
+[server]
+headless = true
+enableCORS = false
+enableXsrfProtection = false
