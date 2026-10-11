@@ -1,5 +1,6 @@
 import streamlit as st
 import math, re, urllib.parse, requests, io, sys, json, time, base64
+import numpy as np
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -87,7 +88,7 @@ st.markdown("""
 st.markdown("""
 <div class="oryn-header">
     <div class="oryn-brand">
-        <svg width="32" height="32" viewBox="0 0 24 24" fill="#4a148c" xmlns="[http://www.w3.org/2000/svg](http://www.w3.org/2000/svg)">
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="#4a148c" xmlns="http://www.w3.org/2000/svg">
             <path d="M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.771-4.2057 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7467-7.0731zM13.2599 22.4042a4.4568 4.4568 0 0 1-2.9001-1.0543l.1422-.0818 4.811-2.778a.791.791 0 0 0 .3955-.6855v-6.786l2.1643 1.25a.1582.1582 0 0 1 .0791.137v5.545a4.4628 4.4628 0 0 1-4.692 4.4536zM3.8205 18.0645a4.4568 4.4568 0 0 1-.5157-3.0568l.1422.0853 4.811 2.778a.791.791 0 0 0 .791 0l5.8753-3.3934v2.5a.1582.1582 0 0 1-.0791.137l-4.8 2.7717a4.4628 4.4628 0 0 1-6.2247-1.8218zm-1.8218-9.4264a4.4568 4.4568 0 0 1 2.3844-2.0025v5.7176a.791.791 0 0 0 .3955.6855l5.8753 3.3934-2.1643 1.25a.1582.1582 0 0 1-.1582 0l-4.8-2.7717a4.4628 4.4628 0 0 1-1.5327-6.2723zm13.931-1.0543-5.8753-3.3934 2.1643-1.25a.1582.1582 0 0 1 .1582 0l4.8 2.7717a4.4628 4.4628 0 0 1-.5157 8.5292v-5.972a.791.791 0 0 0-.7315-.6855zm3.8205 6.3686a4.4568 4.4568 0 0 1 .5157 3.0568l-.1422-.0853-4.811-2.778a.791.791 0 0 0-.791 0l-5.8753 3.3934v-2.5a.1582.1582 0 0 1 .0791-.137l4.8-2.7717a4.4628 4.4628 0 0 1 6.2247 1.8218zM10.7401 13.0847l-2.6105-1.507 2.6105-1.507 2.6105 1.507z"/>
         </svg>
         <h1 class="oryn-title">ORYN AGENT</h1>
@@ -112,7 +113,7 @@ if "telemetry" not in st.session_state:
         "breakdown": {"python": 0, "web": 0, "wiki": 0}
     }
 
-# --- Sidebar & Dynamic Model Discovery ---
+# --- Sidebar Controls ---
 with st.sidebar:
     st.header("⚙️ Agent Controls")
     
@@ -127,7 +128,7 @@ with st.sidebar:
 
     client = Groq(api_key=st.session_state.api_key) if st.session_state.api_key else None
 
-    # Retrieve models directly from the user's account
+    # Discover and populate models
     usable_models = []
     if client:
         try:
@@ -138,7 +139,7 @@ with st.sidebar:
             usable_models = []
 
     if not usable_models:
-        usable_models = ["llama-3.1-8b-instant", "llama3-70b-8192", "mixtral-8x7b-32768", "llama-3.3-70b-versatile"]
+        usable_models = ["llama-3.3-70b-versatile", "llama3-70b-8192", "mixtral-8x7b-32768", "llama-3.1-8b-instant"]
 
     active_model = st.selectbox("Active Model Engine:", options=usable_models, index=0)
     hitl_enabled = st.toggle("🛡️ HITL Safety Guardrails", value=True)
@@ -166,8 +167,23 @@ with st.sidebar:
         }
         st.rerun()
 
-# --- Tool Functions ---
+# --- Sanitization Helper ---
+def clean_code_snippet(code: str) -> str:
+    """Strips markdown fences, backticks, and plt.show() from model code outputs."""
+    cleaned_lines = []
+    for line in code.strip().splitlines():
+        trimmed = line.strip()
+        if trimmed.startswith("```"):
+            continue
+        if "plt.show()" in trimmed:
+            continue
+        cleaned_lines.append(line)
+    return "\n".join(cleaned_lines).strip()
+
+# --- Tool Implementations ---
 def tool_python_interpreter(code: str) -> tuple[str, bytes | None]:
+    code = clean_code_snippet(code)
+    
     if hitl_enabled:
         forbidden = ["import os", "import sys", "import subprocess", "import shutil", "__import__", "open("]
         for term in forbidden:
@@ -181,18 +197,18 @@ def tool_python_interpreter(code: str) -> tuple[str, bytes | None]:
     scope = {
         "math": math, "sympy": sympy, "symbols": symbols, "Symbol": Symbol,
         "Eq": Eq, "solve": solve, "simplify": simplify, "Rational": Rational,
-        "pi": math.pi, "plt": plt, "__builtins__": __builtins__
+        "pi": math.pi, "plt": plt, "np": np, "__builtins__": __builtins__
     }
 
     try:
         plt.close('all')
-        clean_code = code.replace("plt.show()", "")
         sys.stdout = stdout_trap
-        exec("import math\nimport sympy\nimport numpy as np\nfrom sympy import symbols, Eq, solve, simplify, Rational\nimport matplotlib.pyplot as plt\n" + clean_code, scope)
+        exec("import math\nimport sympy\nimport numpy as np\nfrom sympy import symbols, Eq, solve, simplify, Rational\nimport matplotlib.pyplot as plt\n" + code, scope)
         
         if plt.get_fignums():
+            fig = plt.gcf()
             fig_buf = io.BytesIO()
-            plt.savefig(fig_buf, format="png", bbox_inches="tight", dpi=140)
+            fig.savefig(fig_buf, format="png", bbox_inches="tight", dpi=140)
             fig_buf.seek(0)
             plot_bytes = fig_buf.getvalue()
             plt.close('all')
@@ -264,11 +280,11 @@ AGENT_TOOLS = [
         "type": "function",
         "function": {
             "name": "python_interpreter",
-            "description": "Executes Python code for exact calculations or charts with Matplotlib (plt.plot, plt.bar).",
+            "description": "Executes Python code for exact calculations or charts with Matplotlib (plt.plot, plt.bar). Provide executable Python code only.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "code": {"type": "string", "description": "Executable Python code."}
+                    "code": {"type": "string", "description": "Executable Python code string."}
                 },
                 "required": ["code"]
             }
@@ -304,7 +320,7 @@ AGENT_TOOLS = [
     }
 ]
 
-# --- PDF Drawer ---
+# --- Document Attachment Drawer ---
 with st.expander("📎 Ingest Document (PDF)", expanded=False):
     uploaded_pdf = st.file_uploader("Attach PDF", type=["pdf"], label_visibility="collapsed")
     pdf_text = ""
@@ -361,8 +377,9 @@ if user_input:
     else:
         system_prompt = (
             "You are ORYN Agent, an autonomous problem solver.\n"
-            "If the user asks for a chart, graph, plot, or calculation, call `python_interpreter` or write a Python script with plt.plot(). "
-            "Deliver an insightful executive summary."
+            "If the user asks for a chart, graph, plot, or calculation, call `python_interpreter`. "
+            "Write executable Python code in the tool call arguments without markdown formatting. "
+            "After calling tools, synthesize a detailed executive summary answering all aspects of the user's request."
         )
         if pdf_text:
             system_prompt += f"\n\nContext from ingested PDF:\n{pdf_text}"
@@ -373,53 +390,25 @@ if user_input:
                 agent_messages.append({"role": m["role"], "content": m["content"]})
 
         with st.chat_message("assistant"):
-            status_container = st.status("🧠 ORYN Agent is planning & executing...", expanded=True)
-            max_iterations = 3
+            status_container = st.status("🧠 ORYN Agent is planning & executing tools...", expanded=True)
+            max_iterations = 4
             iteration = 0
             final_text = ""
             generated_plot = None
             step_tool_count = 0
 
-            # Dynamic Fallback: Selected model first, then remaining account models
-            model_candidates = [active_model] + [m for m in usable_models if m != active_model]
-
             while iteration < max_iterations:
                 iteration += 1
-                response = None
-                
-                for candidate in model_candidates:
-                    try:
-                        response = client.chat.completions.create(
-                            model=candidate,
-                            messages=agent_messages,
-                            tools=AGENT_TOOLS,
-                            tool_choice="auto",
-                            max_tokens=850
-                        )
-                        break
-                    except Exception as err:
-                        err_str = str(err)
-                        # Fallback for models without tools support
-                        if "tool" in err_str.lower() or "function" in err_str.lower():
-                            try:
-                                response = client.chat.completions.create(
-                                    model=candidate,
-                                    messages=agent_messages,
-                                    max_tokens=850
-                                )
-                                break
-                            except Exception:
-                                continue
-                        elif any(k in err_str for k in ["404", "model_not_found", "model_terms_required"]):
-                            status_container.write(f"⚠️ `{candidate}` unavailable, switching engine...")
-                            continue
-                        else:
-                            final_text = f"Groq Engine Error: {err}"
-                            break
-
-                if not response:
-                    if not final_text:
-                        final_text = "No compatible model could be reached. Please check the sidebar selection."
+                try:
+                    response = client.chat.completions.create(
+                        model=active_model,
+                        messages=agent_messages,
+                        tools=AGENT_TOOLS,
+                        tool_choice="auto",
+                        max_tokens=850
+                    )
+                except Exception as err:
+                    final_text = f"Groq Engine Error: {err}"
                     break
 
                 response_message = response.choices[0].message
@@ -438,7 +427,7 @@ if user_input:
 
                         if fn_name == "python_interpreter":
                             code_str = fn_args.get("code", "")
-                            status_container.code(code_str, language="python")
+                            status_container.code(clean_code_snippet(code_str), language="python")
                             out, maybe_plot = tool_python_interpreter(code_str)
                             if maybe_plot:
                                 generated_plot = maybe_plot
@@ -474,21 +463,35 @@ if user_input:
                     final_text = response_message.content or getattr(response_message, "reasoning", "")
                     break
 
-            # Smart Fallback Interceptor: If model output raw python markdown instead of calling the tool
+            # Fallback 1: If tool loop hit iteration cap without a concluding message, force executive synthesis
+            if not final_text:
+                status_container.write("📝 *Synthesizing executive summary...*")
+                agent_messages.append({
+                    "role": "user",
+                    "content": "Synthesize a clear, detailed executive summary based on the calculations and tool outputs generated above. Do not invoke additional tools."
+                })
+                try:
+                    synth_response = client.chat.completions.create(
+                        model=active_model,
+                        messages=agent_messages,
+                        max_tokens=850
+                    )
+                    final_text = synth_response.choices[0].message.content or "Analysis completed."
+                except Exception as e:
+                    final_text = f"Synthesis note: Calculations executed. Summary error: {e}"
+
+            # Fallback 2: Execute inline code blocks if generated
             if not generated_plot and ("```python" in final_text or "plt." in final_text):
-                status_container.write("⚡ *Detected embedded code — Executing Python visualizer...*")
+                status_container.write("⚡ *Executing inline plot script...*")
                 code_matches = re.findall(r"```(?:python)?\s*(.*?)\s*```", final_text, re.DOTALL)
                 target_code = "\n".join(code_matches) if code_matches else final_text
                 out, maybe_plot = tool_python_interpreter(target_code)
                 if maybe_plot:
                     generated_plot = maybe_plot
-                    status_container.write("📊 *Plot generated via smart interceptor.*")
+                    status_container.write("📊 *Plot generated via fallback.*")
 
             elapsed = time.perf_counter() - start_time
             status_container.update(label=f"✅ Execution Complete ({elapsed:.2f}s)", state="complete", expanded=False)
-
-            if not final_text:
-                final_text = "Task completed without output."
 
             # Update Telemetry
             st.session_state.telemetry["queries"] += 1
