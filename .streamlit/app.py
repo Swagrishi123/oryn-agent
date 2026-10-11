@@ -544,6 +544,272 @@ with st.expander("📎 Multimodal Data Room (PDF / Images)", expanded=False):
 
 # --- Render Chat History ---
 for idx, msg in enumerate(st.session_state.messages):
-    with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
+    with st.chat_message(msg.get("role", "assistant")):
+        st.markdown(msg.get("content", ""))
+        
+        # Display image artifact if present
         if msg.get("image"):
+            st.image(msg["image"], caption="Data Visualization", use_container_width=True)
+            
+        c_dl = st.columns(3)
+        has_buttons = False
+        
+        if msg.get("image"):
+            with c_dl[0]:
+                st.download_button(
+                    "📊 Download Chart (.png)",
+                    msg["image"],
+                    f"chart_{idx}.png",
+                    "image/png",
+                    key=f"dl_p_{idx}",
+                    use_container_width=True
+                )
+            with c_dl[1]:
+                html_doc = build_html_report(msg.get("content", ""), msg["image"])
+                st.download_button(
+                    "📑 Download Report (.html)",
+                    html_doc,
+                    f"report_{idx}.html",
+                    "text/html",
+                    key=f"dl_h_{idx}",
+                    use_container_width=True
+                )
+            has_buttons = True
+            
+        if msg.get("excel"):
+            with c_dl[2]:
+                st.download_button(
+                    "📗 Financial Model (.xlsx)",
+                    msg["excel"],
+                    f"model_{idx}.xlsx",
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key=f"dl_x_{idx}",
+                    use_container_width=True
+                )
+            has_buttons = True
+            
+        if not has_buttons and msg.get("download") and msg.get("content"):
+            st.download_button(
+                "📥 Download Summary (.txt)",
+                msg["content"],
+                f"memo_{idx}.txt",
+                "text/plain",
+                key=f"dl_t_{idx}",
+                use_container_width=True
+            )
+
+# --- User Input & Autonomous Execution Loop ---
+user_input = st.chat_input("Ask ORYN Analyst (e.g. compare TSLA vs BYD margins, analyze uploaded chart)...")
+
+if user_input:
+    start_time = time.perf_counter()
+    st.session_state.messages.append({"role": "user", "content": user_input})
+    with st.chat_message("user"):
+        st.markdown(user_input)
+
+    if not client:
+        with st.chat_message("assistant"):
+            st.error("Please supply a valid Groq API Key.")
+    else:
+        system_prompt = (
+            "You are ORYN Analyst, an autonomous quantitative and market intelligence analyst built by Mriganka.\n"
+            "IDENTITY RULES:\n"
+            "- Never identify as ChatGPT or state that you were created by OpenAI.\n"
+            "- You are an independent session analyst.\n"
+            "OUTPUT STRUCTURE RULES:\n"
+            "Always structure executive deliverables cleanly:\n"
+            "## Executive Summary\n"
+            "A concise 2-3 sentence overview.\n"
+            "## Key Financial & Quantitative Insights\n"
+            "Bullet points with verified metrics and numbers.\n"
+            "## Strategic Recommendations\n"
+            "Actionable insights based on data.\n"
+            "TOOL RULES:\n"
+            "- For stock prices or financials, call `get_financial_data`.\n"
+            "- For math, plots, or financial modeling, call `python_interpreter`.\n"
+            "- When building a data table in python, assign it to a DataFrame named `df` to trigger automatic Excel export.\n"
+            "- If the user states a key assumption or baseline figure, save it using `update_working_memory`.\n"
+            "- To search uploaded PDFs, call `search_document`."
+        )
+
+        if st.session_state.working_memory:
+            system_prompt += f"\n\nCURRENT WORKING MEMORY (Persistent Facts):\n" + "\n".join([f"- {m}" for m in st.session_state.working_memory])
+        if st.session_state.image_insights:
+            system_prompt += f"\n\nPARSED VISUAL ARTIFACTS / OCR DATA:\n{st.session_state.image_insights}"
+
+        agent_messages = [{"role": "system", "content": system_prompt}]
+        for m in st.session_state.messages[-4:]:
+            if m.get("content"):
+                agent_messages.append({"role": m["role"], "content": m["content"]})
+
+        with st.chat_message("assistant"):
+            status_container = st.status("🧠 ORYN Analyst is reasoning & executing...", expanded=True)
+            max_iterations = 5
+            iteration = 0
+            final_text = ""
+            generated_plot = None
+            generated_excel = None
+            step_tool_count = 0
+
+            while iteration < max_iterations:
+                iteration += 1
+                try:
+                    response = client.chat.completions.create(
+                        model=active_model,
+                        messages=agent_messages,
+                        tools=AGENT_TOOLS,
+                        tool_choice="auto",
+                        max_tokens=900
+                    )
+                except Exception as err:
+                    err_str = str(err).lower()
+                    if "tool" in err_str or "400" in err_str:
+                        response = client.chat.completions.create(
+                            model=active_model,
+                            messages=agent_messages,
+                            max_tokens=900
+                        )
+                    else:
+                        final_text = f"Groq Engine Error: {err}"
+                        break
+
+                response_message = response.choices[0].message
+                agent_messages.append(response_message)
+
+                if getattr(response_message, "tool_calls", None):
+                    for tool_call in response_message.tool_calls:
+                        step_tool_count += 1
+                        fn_name = tool_call.function.name
+                        try:
+                            fn_args = json.loads(tool_call.function.arguments)
+                        except Exception:
+                            fn_args = {}
+
+                        status_container.write(f"🛠️ **Tool:** `{fn_name}`")
+
+                        if fn_name == "python_interpreter":
+                            c_str = fn_args.get("code", "")
+                            status_container.code(clean_code_snippet(c_str), language="python")
+                            out, p_bytes, x_bytes = tool_python_interpreter(c_str)
+                            if p_bytes:
+                                generated_plot = p_bytes
+                                status_container.write("📊 *Plot generated successfully.*")
+                            if x_bytes:
+                                generated_excel = x_bytes
+                                status_container.write("📗 *Financial Excel model created.*")
+                            tool_result = out
+                            st.session_state.telemetry["breakdown"]["python"] += 1
+
+                        elif fn_name == "get_financial_data":
+                            tk = fn_args.get("ticker", "")
+                            dtype = fn_args.get("data_type", "summary")
+                            tool_result = tool_get_financial_data(tk, dtype)
+                            status_container.write(f"📈 *Extracted market data for {tk}.*")
+                            st.session_state.telemetry["breakdown"]["finance"] += 1
+
+                        elif fn_name == "search_document":
+                            q = fn_args.get("query", "")
+                            tool_result = tool_search_document(q)
+                            status_container.write(f"📄 *Searched indexed filing.*")
+                            st.session_state.telemetry["breakdown"]["doc_search"] += 1
+
+                        elif fn_name == "update_working_memory":
+                            fact = fn_args.get("fact", "")
+                            tool_result = tool_update_working_memory(fact)
+                            status_container.write(f"🧠 *Saved to Working Memory:* {fact}")
+
+                        elif fn_name == "web_search":
+                            tool_result = tool_web_search(fn_args.get("query", ""))
+                            st.session_state.telemetry["breakdown"]["web"] += 1
+
+                        elif fn_name == "wikipedia_search":
+                            tool_result = tool_wikipedia_search(fn_args.get("query", ""))
+                            st.session_state.telemetry["breakdown"]["wiki"] += 1
+
+                        else:
+                            tool_result = f"Unknown tool `{fn_name}`."
+
+                        agent_messages.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "name": fn_name,
+                            "content": tool_result
+                        })
+                else:
+                    final_text = response_message.content or getattr(response_message, "reasoning", "")
+                    break
+
+            # Fallback inline code interceptor
+            if not generated_plot and ("```python" in final_text or "plt." in final_text):
+                status_container.write("⚡ *Executing inline plot script...*")
+                code_matches = re.findall(r"```(?:python)?\s*(.*?)\s*```", final_text, re.DOTALL)
+                target_code = "\n".join(code_matches) if code_matches else final_text
+                out, p_bytes, x_bytes = tool_python_interpreter(target_code)
+                if p_bytes: generated_plot = p_bytes
+                if x_bytes: generated_excel = x_bytes
+
+            elapsed = time.perf_counter() - start_time
+            status_container.update(label=f"✅ Analysis Complete ({elapsed:.2f}s)", state="complete", expanded=False)
+
+            if not final_text:
+                final_text = "Analysis completed."
+
+            # Update Telemetry
+            st.session_state.telemetry["queries"] += 1
+            st.session_state.telemetry["tool_calls"] += step_tool_count
+            st.session_state.telemetry["last_latency_s"] = elapsed
+            st.session_state.telemetry["tokens_est"] += len(user_input.split()) * 2 + len(final_text.split()) * 2
+
+            # Render Message & Artifacts
+            st.markdown(final_text)
+            if generated_plot:
+                st.image(generated_plot, caption="Generated Visual Artifact", use_container_width=True)
+
+            cd = st.columns(3)
+            if generated_plot:
+                with cd[0]:
+                    st.download_button(
+                        "📊 Download Chart (.png)",
+                        generated_plot,
+                        "oryn_chart.png",
+                        "image/png",
+                        key=f"dl_live_png_{len(st.session_state.messages)}",
+                        use_container_width=True
+                    )
+                with cd[1]:
+                    html_report = build_html_report(final_text, generated_plot)
+                    st.download_button(
+                        "📑 Download Report (.html)",
+                        html_report,
+                        "oryn_executive_report.html",
+                        "text/html",
+                        key=f"dl_live_html_{len(st.session_state.messages)}",
+                        use_container_width=True
+                    )
+            if generated_excel:
+                with cd[2]:
+                    st.download_button(
+                        "📗 Financial Model (.xlsx)",
+                        generated_excel,
+                        "oryn_model.xlsx",
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key=f"dl_live_xlsx_{len(st.session_state.messages)}",
+                        use_container_width=True
+                    )
+            elif not generated_plot and not generated_excel:
+                st.download_button(
+                    "📥 Download Summary (.txt)",
+                    final_text,
+                    "oryn_report.txt",
+                    "text/plain",
+                    key=f"dl_live_txt_{len(st.session_state.messages)}",
+                    use_container_width=True
+                )
+
+            st.session_state.messages.append({
+                "role": "assistant",
+                "content": final_text,
+                "image": generated_plot,
+                "excel": generated_excel,
+                "download": True
+            })
