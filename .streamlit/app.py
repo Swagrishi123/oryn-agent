@@ -95,9 +95,12 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# --- State & Telemetry Initialization ---
+# --- State Initialization ---
 if "messages" not in st.session_state:
     st.session_state.messages = []
+
+if "api_key" not in st.session_state:
+    st.session_state.api_key = st.secrets.get("GROQ_API_KEY", "")
 
 if "telemetry" not in st.session_state:
     st.session_state.telemetry = {
@@ -108,19 +111,47 @@ if "telemetry" not in st.session_state:
         "breakdown": {"python": 0, "web": 0, "wiki": 0}
     }
 
-# --- Sidebar: Configuration & PM Telemetry Dashboard ---
+# --- Sidebar Controls ---
 with st.sidebar:
     st.header("⚙️ Agent Controls")
-    raw_key = st.secrets.get("GROQ_API_KEY", None)
-    if not raw_key:
-        raw_key = st.text_input("Groq API Key:", type="password")
-        st.caption("Free key available at console.groq.com")
     
-    api_key = str(raw_key).strip() if raw_key else None
-    client = Groq(api_key=api_key) if api_key else None
+    # API Key Input (Uses session state to avoid clearing)
+    key_input = st.text_input(
+        "Groq API Key:",
+        value=st.session_state.api_key,
+        type="password",
+        help="To save permanently: Streamlit Cloud -> Manage app -> Settings -> Secrets"
+    )
+    if key_input:
+        st.session_state.api_key = key_input.strip()
 
-    # HITL Governance Toggle
-    hitl_enabled = st.toggle("🛡️ HITL Safety Guardrails", value=True, help="Audits and blocks unsafe Python executions before running.")
+    client = Groq(api_key=st.session_state.api_key) if st.session_state.api_key else None
+
+    # Dynamic Model Discovery
+    available_chat_models = []
+    if client:
+        try:
+            raw_models = [m.id for m in client.models.list().data]
+            # Filter out non-chat models (audio, guard, embeddings)
+            available_chat_models = [
+                m for m in raw_models 
+                if not any(x in m.lower() for x in ["whisper", "guard", "vision", "embed", "safeguard"])
+            ]
+        except Exception:
+            available_chat_models = []
+
+    if not available_chat_models:
+        available_chat_models = [
+            "llama-3.3-70b-versatile",
+            "llama-3.1-70b-versatile",
+            "llama3-70b-8192",
+            "llama3-8b-8192",
+            "mixtral-8x7b-32768"
+        ]
+
+    active_model = st.selectbox("Active Model Engine:", options=available_chat_models, index=0)
+
+    hitl_enabled = st.toggle("🛡️ HITL Safety Guardrails", value=True)
 
     st.markdown("---")
     st.header("📊 PM Telemetry Dashboard")
@@ -132,9 +163,8 @@ with st.sidebar:
         st.metric("Last Latency", f"{st.session_state.telemetry['last_latency_s']:.2f}s")
         st.metric("Est. Tokens", st.session_state.telemetry["tokens_est"])
 
-    st.caption("Tool Usage Distribution:")
+    st.caption("Tool Distribution:")
     b = st.session_state.telemetry["breakdown"]
-    st.progress(min(1.0, (b["python"] + b["web"] + b["wiki"]) / max(1, st.session_state.telemetry["tool_calls"] or 1)))
     st.text(f"Python: {b['python']} | Web: {b['web']} | Wiki: {b['wiki']}")
 
     st.markdown("---")
@@ -146,39 +176,18 @@ with st.sidebar:
         }
         st.rerun()
 
-# --- Model Resolution ---
-active_model = "llama-3.1-8b-instant"
-if client:
-    try:
-        available_models = [m.id for m in client.models.list().data]
-        priority_models = [
-            "llama-3.3-70b-versatile",
-            "llama-3.1-8b-instant",
-            "llama-3.2-3b-preview",
-            "mixtral-8x7b-32768"
-        ]
-        for candidate in priority_models:
-            if candidate in available_models:
-                active_model = candidate
-                break
-    except Exception:
-        pass
-
-# --- Tool Implementations ---
+# --- Tool Functions ---
 def tool_python_interpreter(code: str) -> tuple[str, bytes | None]:
-    """Executes Python, SymPy, and Matplotlib code safely, returning text output and optional plot bytes."""
-    # HITL Guardrail Inspection
     if hitl_enabled:
-        forbidden = ["import os", "import sys", "import subprocess", "import shutil", "__import__", "open(", "eval("]
+        forbidden = ["import os", "import sys", "import subprocess", "import shutil", "__import__", "open("]
         for term in forbidden:
             if term in code:
-                return f"🛡️ HITL Security Intercept: Execution blocked. Prohibited pattern '{term}' detected.", None
+                return f"🛡️ HITL Intercept: Execution blocked. '{term}' is restricted.", None
 
     stdout_trap = io.StringIO()
     sys_stdout_backup = sys.stdout
     plot_bytes = None
     
-    # Safe runtime scope
     scope = {
         "math": math, "sympy": sympy, "symbols": symbols, "Symbol": Symbol,
         "Eq": Eq, "solve": solve, "simplify": simplify, "Rational": Rational,
@@ -186,11 +195,10 @@ def tool_python_interpreter(code: str) -> tuple[str, bytes | None]:
     }
 
     try:
-        plt.close('all')  # Clear any stale figures
+        plt.close('all')
         sys.stdout = stdout_trap
         exec("import math\nimport sympy\nfrom sympy import symbols, Eq, solve, simplify, Rational\nimport matplotlib.pyplot as plt\n" + code, scope)
         
-        # Check if code generated a Matplotlib figure
         if plt.get_fignums():
             fig_buf = io.BytesIO()
             plt.savefig(fig_buf, format="png", bbox_inches="tight", dpi=140)
@@ -199,7 +207,7 @@ def tool_python_interpreter(code: str) -> tuple[str, bytes | None]:
             plt.close('all')
 
         output = stdout_trap.getvalue().strip()
-        return (output if output else "Script executed cleanly without printed output."), plot_bytes
+        return (output if output else "Executed successfully with plot output."), plot_bytes
     except Exception as e:
         plt.close('all')
         return f"Python Execution Error: {e}", None
@@ -207,7 +215,6 @@ def tool_python_interpreter(code: str) -> tuple[str, bytes | None]:
         sys.stdout = sys_stdout_backup
 
 def tool_web_search(query: str) -> str:
-    """Executes a real-time live internet search via DuckDuckGo."""
     try:
         with DDGS() as ddgs:
             results = list(ddgs.text(query, max_results=3))
@@ -215,37 +222,34 @@ def tool_web_search(query: str) -> str:
             return f"No web search results found for '{query}'."
         formatted = []
         for r in results:
-            title = r.get("title", "")
-            body = r.get("body", "")[:280]
-            formatted.append(f"• [{title}]: {body}")
+            formatted.append(f"• [{r.get('title', '')}]: {r.get('body', '')[:280]}")
         return "\n".join(formatted)
     except Exception as e:
         return f"Web Search Error: {e}"
 
 def tool_wikipedia_search(query: str) -> str:
-    """Retrieves encyclopedic summaries from Wikipedia."""
     try:
         url = f"https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch={urllib.parse.quote(query)}&utf8=&format=json"
-        res = requests.get(url, headers={"User-Agent": "ORYN-Agent/3.0 (builder@oryn.ai)"}, timeout=4).json()
+        res = requests.get(url, headers={"User-Agent": "ORYN-Agent/3.0"}, timeout=4).json()
         hits = res.get("query", {}).get("search", [])
         if hits:
-            clean_snippet = re.sub(r"<[^>]+>", "", hits[0].get("snippet", ""))
-            return f"Wikipedia [{hits[0].get('title')}]: {clean_snippet}"
+            clean = re.sub(r"<[^>]+>", "", hits[0].get("snippet", ""))
+            return f"Wikipedia [{hits[0].get('title')}]: {clean}"
         return f"No Wikipedia entries found for '{query}'."
     except Exception as e:
-        return f"Wikipedia Search Error: {e}"
+        return f"Wikipedia Error: {e}"
 
-# --- Native Tool Schemas ---
+# --- Tool Schemas ---
 AGENT_TOOLS = [
     {
         "type": "function",
         "function": {
             "name": "python_interpreter",
-            "description": "Executes Python scripts for exact math, SymPy equations, or Matplotlib plots. Use print() for text and plt.plot() for data visualizations.",
+            "description": "Executes Python code for exact calculations or generating charts with Matplotlib (plt.plot, plt.bar).",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "code": {"type": "string", "description": "Executable Python code string."}
+                    "code": {"type": "string", "description": "Executable Python code."}
                 },
                 "required": ["code"]
             }
@@ -255,11 +259,11 @@ AGENT_TOOLS = [
         "type": "function",
         "function": {
             "name": "web_search",
-            "description": "Performs live web search for current events, fresh news, real-time prices, and market movements.",
+            "description": "Searches the live web for recent updates, real-time facts, and market information.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "Specific search query."}
+                    "query": {"type": "string", "description": "Search query."}
                 },
                 "required": ["query"]
             }
@@ -269,11 +273,11 @@ AGENT_TOOLS = [
         "type": "function",
         "function": {
             "name": "wikipedia_search",
-            "description": "Searches Wikipedia for historical records, scientific concepts, and entity bios.",
+            "description": "Searches Wikipedia for verified background facts, history, and encyclopedic definitions.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "Entity or concept query."}
+                    "query": {"type": "string", "description": "Search term."}
                 },
                 "required": ["query"]
             }
@@ -281,33 +285,32 @@ AGENT_TOOLS = [
     }
 ]
 
-# --- Document Attachment Drawer ---
+# --- PDF Drawer ---
 with st.expander("📎 Ingest Document (PDF)", expanded=False):
-    uploaded_pdf = st.file_uploader("Attach PDF for in-memory contextual extraction", type=["pdf"], label_visibility="collapsed")
+    uploaded_pdf = st.file_uploader("Attach PDF", type=["pdf"], label_visibility="collapsed")
     pdf_text = ""
     if uploaded_pdf:
         reader = PdfReader(uploaded_pdf)
         pdf_text = "".join([p.extract_text() or "" for p in reader.pages[:8]])[:4000]
-        st.success(f"Ingested: {uploaded_pdf.name} ({len(pdf_text)} characters)")
+        st.success(f"Ingested: {uploaded_pdf.name}")
 
 # --- Render Chat History ---
 for idx, msg in enumerate(st.session_state.messages):
-    if msg.get("content"):
-        with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
-            if msg.get("image"):
-                st.image(msg["image"], caption="Rendered Plot Artifact", use_container_width=True)
-            if msg.get("download"):
-                st.download_button(
-                    label="📥 Download Output Artifact (.md)",
-                    data=msg["content"],
-                    file_name=f"oryn_report_{idx}.md",
-                    mime="text/markdown",
-                    key=f"dl_hist_{idx}"
-                )
+    with st.chat_message(msg["role"]):
+        st.markdown(msg["content"])
+        if msg.get("image"):
+            st.image(msg["image"], caption="Rendered Visual", use_container_width=True)
+        if msg.get("download"):
+            st.download_button(
+                label="📥 Download Output Artifact (.txt)",
+                data=msg["content"],
+                file_name=f"oryn_report_{idx}.txt",
+                mime="text/plain",
+                key=f"dl_history_{idx}"
+            )
 
-# --- User Interaction & Autonomous ReAct Engine ---
-user_input = st.chat_input("Direct ORYN Agent (e.g. plot data, solve quantitative aptitude, search live web)...")
+# --- User Input & Agent Loop ---
+user_input = st.chat_input("Ask ORYN Agent (e.g. plot data, calculate math, search web)...")
 
 if user_input:
     start_time = time.perf_counter()
@@ -317,15 +320,14 @@ if user_input:
 
     if not client:
         with st.chat_message("assistant"):
-            st.error("Please enter a valid Groq API Key in the left sidebar to activate ORYN Agent.")
+            st.error("Please provide a Groq API Key in the sidebar or via Streamlit Secrets.")
     else:
         system_prompt = (
-            "You are ORYN Agent, an autonomous problem-solving engine. "
-            "You have access to: `python_interpreter` (for exact math and Matplotlib plots), "
-            "`web_search` (for live web info), and `wikipedia_search` (for background context). "
-            "Never hallucinate numbers or fresh real-world facts. Use your tools when needed. "
-            "If code execution returns an error, self-correct and retry in the next step. "
-            "Deliver structured, insightful, and comprehensive answers."
+            "You are ORYN Agent, an autonomous problem solver. "
+            "Use `python_interpreter` for calculations and Matplotlib plots. "
+            "Use `web_search` for current information and `wikipedia_search` for background context. "
+            "If code execution throws an error, reflect on the error and fix it in your next step. "
+            "Deliver complete, clear answers."
         )
         if pdf_text:
             system_prompt += f"\n\nContext from ingested PDF:\n{pdf_text}"
@@ -336,7 +338,7 @@ if user_input:
                 agent_messages.append({"role": m["role"], "content": m["content"]})
 
         with st.chat_message("assistant"):
-            status_container = st.status("🧠 ORYN Agent is analyzing intent & planning...", expanded=True)
+            status_container = st.status("🧠 ORYN Agent is reasoning & selecting tools...", expanded=True)
             max_iterations = 3
             iteration = 0
             final_text = ""
@@ -399,7 +401,6 @@ if user_input:
                         else:
                             tool_result = f"Unknown tool `{fn_name}`."
 
-                        # ReAct feedback injection
                         agent_messages.append({
                             "role": "tool",
                             "tool_call_id": tool_call.id,
@@ -411,35 +412,36 @@ if user_input:
                     break
 
             elapsed = time.perf_counter() - start_time
-            status_container.update(label=f"✅ Execution Complete ({elapsed:.2f}s • {iteration} cycles)", state="complete", expanded=False)
+            status_container.update(label=f"✅ Execution Complete ({elapsed:.2f}s)", state="complete", expanded=False)
 
             if not final_text:
-                final_text = "Task completed without generated output."
+                final_text = "Task completed without text output."
 
-            # Update Telemetry State
+            # Update Telemetry
             st.session_state.telemetry["queries"] += 1
             st.session_state.telemetry["tool_calls"] += step_tool_count
             st.session_state.telemetry["last_latency_s"] = elapsed
             st.session_state.telemetry["tokens_est"] += len(user_input.split()) * 2 + len(final_text.split()) * 2
 
-            # Render Outputs
+            # Render Responses
             st.markdown(final_text)
             if generated_plot:
-                st.image(generated_plot, caption="Rendered Plot Artifact", use_container_width=True)
+                st.image(generated_plot, caption="Rendered Visual", use_container_width=True)
 
-            st.download_button(
-                label="📥 Download Output Artifact (.md)",
-                data=final_text,
-                file_name="oryn_agent_output.md",
-                mime="text/markdown",
-                key=f"dl_live_{len(st.session_state.messages)}"
-            )
+            is_valid_output = not final_text.startswith("Groq Engine Error")
+            if is_valid_output:
+                st.download_button(
+                    label="📥 Download Output Artifact (.txt)",
+                    data=final_text,
+                    file_name="oryn_agent_report.txt",
+                    mime="text/plain",
+                    key=f"dl_live_{len(st.session_state.messages)}"
+                )
 
-            # Persist to history
+            # Persist message
             st.session_state.messages.append({
                 "role": "assistant",
                 "content": final_text,
                 "image": generated_plot,
-                "download": True
+                "download": is_valid_output
             })
-            st.rerun()
