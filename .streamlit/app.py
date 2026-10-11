@@ -9,6 +9,7 @@ from pypdf import PdfReader
 from PIL import Image
 import yfinance as yf
 from groq import Groq
+from google import genai
 import sympy
 from sympy import symbols, Symbol, Eq, solve, simplify, Rational
 from duckduckgo_search import DDGS
@@ -140,6 +141,9 @@ if "messages" not in st.session_state:
 if "api_key" not in st.session_state:
     st.session_state.api_key = st.secrets.get("GROQ_API_KEY", "")
 
+if "gemini_key" not in st.session_state:
+    st.session_state.gemini_key = st.secrets.get("GEMINI_API_KEY", "")
+
 if "working_memory" not in st.session_state:
     st.session_state.working_memory = []
 
@@ -148,6 +152,9 @@ if "pdf_chunks" not in st.session_state:
 
 if "image_insights" not in st.session_state:
     st.session_state.image_insights = ""
+
+if "last_image_name" not in st.session_state:
+    st.session_state.last_image_name = ""
 
 if "telemetry" not in st.session_state:
     st.session_state.telemetry = {
@@ -166,6 +173,7 @@ with col_hdr_r:
         st.session_state.working_memory = []
         st.session_state.pdf_chunks = []
         st.session_state.image_insights = ""
+        st.session_state.last_image_name = ""
         st.session_state.telemetry = {
             "queries": 0, "tool_calls": 0, "last_latency_s": 0.0, "tokens_est": 0,
             "breakdown": {"python": 0, "web": 0, "wiki": 0, "finance": 0, "doc_search": 0}
@@ -176,13 +184,22 @@ with col_hdr_r:
 with st.sidebar:
     st.header("⚙️ Analyst Controls")
     key_input = st.text_input(
-        "Groq API Key:",
+        "Groq API Key (Engine):",
         value=st.session_state.api_key,
         type="password",
-        help="Permanent key: Streamlit Cloud -> Settings -> Secrets"
+        help="Groq API Key for fast reasoning & tools"
     )
     if key_input:
         st.session_state.api_key = key_input.strip()
+
+    gemini_input = st.text_input(
+        "Gemini API Key (Vision Parser):",
+        value=st.session_state.gemini_key,
+        type="password",
+        help="Free key from Google AI Studio to inspect uploaded charts/images"
+    )
+    if gemini_input:
+        st.session_state.gemini_key = gemini_input.strip()
 
     client = Groq(api_key=st.session_state.api_key) if st.session_state.api_key else None
 
@@ -489,54 +506,56 @@ with st.expander("📎 Multimodal Data Room (PDF / Images)", expanded=False):
 
     with tab_img:
         uploaded_img = st.file_uploader("Upload Chart / Screenshot", type=["png", "jpg", "jpeg"], key="up_img")
-        if uploaded_img and not st.session_state.image_insights:
-            if client:
-                with st.spinner("🧠 Vision Model inspecting image..."):
-                    img_bytes = uploaded_img.getvalue()
-                    b64_img = base64.b64encode(img_bytes).decode('utf-8')
+        if uploaded_img and (not st.session_state.image_insights or st.session_state.last_image_name != uploaded_img.name):
+            st.session_state.last_image_name = uploaded_img.name
+            img_bytes = uploaded_img.getvalue()
 
-                    # Discover all active vision-capable models dynamically
-                    available_vision_models = []
+            # Priority 1: High-Precision Gemini Vision Eye (if key provided)
+            if st.session_state.gemini_key:
+                with st.spinner("🧠 Vision Engine inspecting image..."):
                     try:
-                        raw_models = [m.id for m in client.models.list().data]
-                        available_vision_models = [m for m in raw_models if "vision" in m.lower() and "preview" not in m.lower()]
-                        if not available_vision_models:
-                            available_vision_models = [m for m in raw_models if "vision" in m.lower()]
-                    except Exception:
-                        available_vision_models = []
-
-                    fallback_vision = ["llama-3.2-11b-vision", "llama-3.2-90b-vision"]
-                    vision_candidates = available_vision_models if available_vision_models else fallback_vision
-
-                    parsed_successfully = False
-                    for v_model in vision_candidates:
+                        g_client = genai.Client(api_key=st.session_state.gemini_key)
+                        pil_img = Image.open(io.BytesIO(img_bytes))
+                        v_res = g_client.models.generate_content(
+                            model='gemini-2.5-flash',
+                            contents=['Extract and describe all numbers, tables, pie chart slices, labels, and trends with high quantitative precision.', pil_img]
+                        )
+                        st.session_state.image_insights = v_res.text
+                        st.success(f"Image `{uploaded_img.name}` parsed successfully into memory.")
+                    except Exception as err:
+                        st.error(f"Gemini Vision parsing error: {err}")
+            # Priority 2: Fallback to Groq if user has custom vision access enabled
+            elif client:
+                with st.spinner("🧠 Checking Groq vision access..."):
+                    b64_img = base64.b64encode(img_bytes).decode('utf-8')
+                    groq_success = False
+                    for v_mod in ["llama-3.2-11b-vision", "llama-3.2-90b-vision"]:
                         try:
                             vision_resp = client.chat.completions.create(
-                                model=v_model,
+                                model=v_mod,
                                 messages=[
                                     {
                                         "role": "user",
                                         "content": [
-                                            {"type": "text", "text": "Extract all numerical tables, trendlines, and metrics from this image with high precision."},
+                                            {"type": "text", "text": "Extract all numbers, chart slices, and labels with high precision."},
                                             {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64_img}"}}
                                         ]
                                     }
                                 ]
                             )
                             st.session_state.image_insights = vision_resp.choices[0].message.content
-                            st.success(f"Image parsed into Agent Memory using `{v_model}`.")
-                            parsed_successfully = True
+                            st.success(f"Image parsed via Groq `{v_mod}`.")
+                            groq_success = True
                             break
                         except Exception:
                             continue
-
-                    if not parsed_successfully:
-                        st.warning("⚠️ No active vision models currently enabled on this Groq API key tier. You can still paste values directly into chat.")
+                    if not groq_success:
+                        st.warning("⚠️ Groq tier has no vision models. Enter a free Gemini API Key in the sidebar for full chart inspection, or paste values into chat.")
             else:
-                st.warning("Provide Groq API key first.")
+                st.warning("Please supply an API Key in the sidebar.")
 
     if st.session_state.image_insights:
-        st.info(f"**Parsed Image Context:**\n{st.session_state.image_insights[:300]}...")
+        st.info(f"**Parsed Image Context ({st.session_state.last_image_name}):**\n{st.session_state.image_insights[:300]}...")
 
 # --- Render Chat History ---
 for idx, msg in enumerate(st.session_state.messages):
@@ -578,13 +597,16 @@ if user_input:
             "You are ORYN Analyst, an autonomous quantitative and market intelligence analyst built by Mriganka.\n"
             "BEHAVIOR RULES:\n"
             "- For general knowledge, direct questions, or simple chat, answer DIRECTLY and concisely without forcing financial sections.\n"
-            "- When asked for financial research, comparisons, or modeling, call the relevant tools and deliver a complete executive briefing."
+            "- When asked for financial research, comparisons, or modeling, call the relevant tools and deliver a complete executive briefing.\n"
         )
+
+        if st.session_state.last_image_name and not st.session_state.image_insights:
+            system_prompt += f"\nNOTICE: The user uploaded an image named '{st.session_state.last_image_name}', but no vision key was provided to parse it. If asked about the picture, explain that vision parsing requires a Gemini API key in the sidebar."
 
         if st.session_state.working_memory:
             system_prompt += f"\n\nCURRENT WORKING MEMORY:\n" + "\n".join([f"- {m}" for m in st.session_state.working_memory])
         if st.session_state.image_insights:
-            system_prompt += f"\n\nPARSED VISUAL ARTIFACTS / OCR DATA:\n{st.session_state.image_insights}"
+            system_prompt += f"\n\nPARSED VISUAL ARTIFACTS / OCR DATA ({st.session_state.last_image_name}):\n{st.session_state.image_insights}"
 
         agent_messages = [{"role": "system", "content": system_prompt}]
         for m in st.session_state.messages[-4:]:
@@ -680,7 +702,6 @@ if user_input:
                     final_text = response_message.content or ""
                     break
 
-            # Only synthesize if tools were called in THIS turn and no message body was generated
             if step_tool_count > 0 and (not final_text or len(final_text.strip()) == 0):
                 status_container.write("📝 *Synthesizing briefing...*")
                 agent_messages.append({
@@ -697,7 +718,6 @@ if user_input:
                 except Exception as e:
                     final_text = f"Synthesis note: {e}"
 
-            # Fallback code interceptor
             if not generated_plot and ("```python" in final_text or "plt." in final_text):
                 status_container.write("⚡ *Executing inline plot script...*")
                 code_matches = re.findall(r"```(?:python)?\s*(.*?)\s*```", final_text, re.DOTALL)
@@ -709,13 +729,11 @@ if user_input:
             elapsed = time.perf_counter() - start_time
             status_container.update(label=f"✅ Complete ({elapsed:.2f}s)", state="complete", expanded=False)
 
-            # Update Telemetry
             st.session_state.telemetry["queries"] += 1
             st.session_state.telemetry["tool_calls"] += step_tool_count
             st.session_state.telemetry["last_latency_s"] = elapsed
             st.session_state.telemetry["tokens_est"] += len(user_input.split()) * 2 + len(final_text.split()) * 2
 
-            # Render Responses
             st.markdown(final_text)
             if generated_plot:
                 st.image(generated_plot, caption="Generated Visual Artifact", use_container_width=True)
