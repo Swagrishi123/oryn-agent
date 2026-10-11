@@ -10,15 +10,15 @@ import sympy
 from sympy import symbols, Symbol, Eq, solve, simplify, Rational
 from duckduckgo_search import DDGS
 
-# --- Page Configuration (Mobile-Optimized) ---
+# --- Page Configuration (Mobile-First) ---
 st.set_page_config(
     page_title="ORYN Agent — Unified",
     page_icon="✦",
     layout="wide",
-    initial_sidebar_state="auto"
+    initial_sidebar_state="collapsed"
 )
 
-# --- Responsive Purple UI & Mobile-First UX Styling ---
+# --- Responsive Purple UI & Mobile Styling ---
 st.markdown("""
 <style>
     .stApp {
@@ -26,25 +26,26 @@ st.markdown("""
         font-family: 'Google Sans', -apple-system, BlinkMacSystemFont, sans-serif;
     }
     
+    /* Header Area */
     .oryn-header {
         position: sticky;
         top: 0;
         z-index: 999;
         background: rgba(255, 255, 255, 0.98);
         backdrop-filter: blur(10px);
-        padding: 12px 10px 8px 10px;
+        padding: 10px 8px 6px 8px;
         border-bottom: 1px solid rgba(74, 20, 140, 0.1);
         text-align: center;
-        margin-bottom: 16px;
+        margin-bottom: 12px;
     }
     .oryn-brand {
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        gap: 10px;
+        gap: 8px;
     }
     .oryn-title {
-        font-size: 1.8rem;
+        font-size: 1.6rem;
         font-weight: 800;
         color: #4a148c !important;
         margin: 0;
@@ -52,25 +53,27 @@ st.markdown("""
     }
     .oryn-subtitle {
         color: #7b1fa2 !important;
-        font-size: 0.85rem;
+        font-size: 0.78rem;
         font-weight: 500;
-        margin: 4px 0 0 0;
+        margin: 2px 0 0 0;
     }
 
+    /* Chat Messages */
     div[data-testid="stChatMessage"]:has(div[data-testid="stChatMessageAvatarUser"]) {
         background-color: #f3e8ff !important;
         border-radius: 16px !important;
-        padding: 12px 16px !important;
+        padding: 10px 14px !important;
         border: 1px solid #e9d5ff !important;
         margin-bottom: 8px !important;
     }
     div[data-testid="stChatMessage"]:has(div[data-testid="stChatMessageAvatarUser"]) * {
         color: #6b21a8 !important;
+        font-size: 0.95rem !important;
     }
     div[data-testid="stChatMessage"]:has(div[data-testid="stChatMessageAvatarAssistant"]) {
         background-color: #faf5ff !important;
         border-radius: 16px !important;
-        padding: 14px 18px !important;
+        padding: 12px 16px !important;
         border: 1px solid #f3e8ff !important;
         margin-bottom: 8px !important;
     }
@@ -79,8 +82,10 @@ st.markdown("""
     div[data-testid="stChatMessage"]:has(div[data-testid="stChatMessageAvatarAssistant"]) span {
         color: #4a148c !important;
         font-weight: 500;
+        font-size: 0.95rem !important;
     }
     
+    /* Code Blocks */
     code {
         background-color: #ede9fe !important;
         color: #581c87 !important;
@@ -90,48 +95,25 @@ st.markdown("""
         word-break: break-word !important;
     }
     
+    /* Touch Target Buttons */
     .stDownloadButton button, .stButton button {
-        min-height: 44px !important;
+        min-height: 42px !important;
         border-radius: 10px !important;
         font-weight: 600 !important;
         border: 1px solid #e9d5ff !important;
         transition: all 0.2s ease !important;
     }
-    .stDownloadButton button:hover, .stButton button:hover {
-        border-color: #7b1fa2 !important;
-        background-color: #f3e8ff !important;
-    }
 
+    /* Mobile Viewport Tweaks */
     @media screen and (max-width: 768px) {
         .block-container {
-            padding-top: 1.5rem !important;
+            padding-top: 1rem !important;
             padding-bottom: 4rem !important;
-            padding-left: 0.8rem !important;
-            padding-right: 0.8rem !important;
+            padding-left: 0.6rem !important;
+            padding-right: 0.6rem !important;
         }
-        .oryn-header {
-            padding: 8px 4px 6px 4px !important;
-            margin-bottom: 10px !important;
-        }
-        .oryn-title {
-            font-size: 1.35rem !important;
-        }
-        .oryn-subtitle {
-            font-size: 0.72rem !important;
-            line-height: 1.2 !important;
-        }
-        .oryn-brand svg {
-            width: 24px !important;
-            height: 24px !important;
-        }
-        div[data-testid="stChatMessage"] {
-            padding: 10px 12px !important;
-            border-radius: 12px !important;
-        }
-        div[data-testid="stChatMessage"] * {
-            font-size: 0.92rem !important;
-            line-height: 1.45 !important;
-        }
+        .oryn-title { font-size: 1.3rem !important; }
+        .oryn-subtitle { font-size: 0.7rem !important; }
         div[data-testid="column"] {
             width: 100% !important;
             flex: 1 1 100% !important;
@@ -139,10 +121,7 @@ st.markdown("""
         }
         .stDownloadButton button {
             width: 100% !important;
-            margin-bottom: 8px !important;
-        }
-        div[data-testid="stExpander"] {
-            margin-bottom: 8px !important;
+            margin-bottom: 6px !important;
         }
     }
 </style>
@@ -152,12 +131,12 @@ st.markdown("""
 st.markdown("""
 <div class="oryn-header">
     <div class="oryn-brand">
-        <svg width="28" height="28" viewBox="0 0 24 24" fill="#4a148c" xmlns="http://www.w3.org/2000/svg">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="#4a148c" xmlns="http://www.w3.org/2000/svg">
             <path d="M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.771-4.2057 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7467-7.0731zM13.2599 22.4042a4.4568 4.4568 0 0 1-2.9001-1.0543l.1422-.0818 4.811-2.778a.791.791 0 0 0 .3955-.6855v-6.786l2.1643 1.25a.1582.1582 0 0 1 .0791.137v5.545a4.4628 4.4628 0 0 1-4.692 4.4536zM3.8205 18.0645a4.4568 4.4568 0 0 1-.5157-3.0568l.1422.0853 4.811 2.778a.791.791 0 0 0 .791 0l5.8753-3.3934v2.5a.1582.1582 0 0 1-.0791.137l-4.8 2.7717a4.4628 4.4628 0 0 1-6.2247-1.8218zm-1.8218-9.4264a4.4568 4.4568 0 0 1 2.3844-2.0025v5.7176a.791.791 0 0 0 .3955.6855l5.8753 3.3934-2.1643 1.25a.1582.1582 0 0 1-.1582 0l-4.8-2.7717a4.4628 4.4628 0 0 1-1.5327-6.2723zm13.931-1.0543-5.8753-3.3934 2.1643-1.25a.1582.1582 0 0 1 .1582 0l4.8 2.7717a4.4628 4.4628 0 0 1-.5157 8.5292v-5.972a.791.791 0 0 0-.7315-.6855zm3.8205 6.3686a4.4568 4.4568 0 0 1 .5157 3.0568l-.1422-.0853-4.811-2.778a.791.791 0 0 0-.791 0l-5.8753 3.3934v-2.5a.1582.1582 0 0 1 .0791-.137l4.8-2.7717a4.4628 4.4628 0 0 1 6.2247 1.8218zM10.7401 13.0847l-2.6105-1.507 2.6105-1.507 2.6105 1.507z"/>
         </svg>
         <h1 class="oryn-title">ORYN AGENT</h1>
     </div>
-    <p class="oryn-subtitle">Autonomous Reasoning • Tool Chaining • HITL Governance • Live Telemetry</p>
+    <p class="oryn-subtitle">Autonomous Reasoning • Tool Chaining • HITL Governance</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -177,15 +156,23 @@ if "telemetry" not in st.session_state:
         "breakdown": {"python": 0, "web": 0, "wiki": 0}
     }
 
-# Models officially supporting Groq tool calling
-VERIFIED_TOOL_MODELS = [
-    "llama-3.3-70b-versatile",
-    "llama-3.1-8b-instant",
-    "llama-3.1-70b-versatile",
-    "llama3-70b-8192",
-    "llama3-8b-8192",
-    "mixtral-8x7b-32768"
+# Verified tool-calling models on Groq
+RELIABLE_TOOL_MODELS = [
+    "llama-3.1-8b-instant",       # Primary: high availability, no 404s, full tool calling
+    "llama-3.3-70b-versatile",    # Secondary: 70B reasoning
+    "llama-3.1-70b-versatile"     # Fallback: 70B variant
 ]
+
+# Quick Reset Bar for Mobile
+col_hdr_l, col_hdr_r = st.columns([3, 1])
+with col_hdr_r:
+    if st.button("🗑️ Reset", use_container_width=True, help="Clear chat and restart session"):
+        st.session_state.messages = []
+        st.session_state.telemetry = {
+            "queries": 0, "tool_calls": 0, "last_latency_s": 0.0, "tokens_est": 0,
+            "breakdown": {"python": 0, "web": 0, "wiki": 0}
+        }
+        st.rerun()
 
 # --- Sidebar Controls ---
 with st.sidebar:
@@ -202,17 +189,17 @@ with st.sidebar:
 
     client = Groq(api_key=st.session_state.api_key) if st.session_state.api_key else None
 
-    # Filter available models strictly for tool-calling models
+    # Discover and populate models
     usable_models = []
     if client:
         try:
             account_models = [m.id for m in client.models.list().data]
-            usable_models = [m for m in VERIFIED_TOOL_MODELS if m in account_models]
+            usable_models = [m for m in RELIABLE_TOOL_MODELS if m in account_models]
         except Exception:
             usable_models = []
 
     if not usable_models:
-        usable_models = VERIFIED_TOOL_MODELS
+        usable_models = RELIABLE_TOOL_MODELS
 
     active_model = st.selectbox("Active Model Engine:", options=usable_models, index=0)
     hitl_enabled = st.toggle("🛡️ HITL Safety Guardrails", value=True)
@@ -230,15 +217,6 @@ with st.sidebar:
     st.caption("Tool Distribution:")
     b = st.session_state.telemetry["breakdown"]
     st.text(f"Python: {b['python']} | Web: {b['web']} | Wiki: {b['wiki']}")
-
-    st.markdown("---")
-    if st.button("🗑️ Reset Agent Session", use_container_width=True):
-        st.session_state.messages = []
-        st.session_state.telemetry = {
-            "queries": 0, "tool_calls": 0, "last_latency_s": 0.0, "tokens_est": 0,
-            "breakdown": {"python": 0, "web": 0, "wiki": 0}
-        }
-        st.rerun()
 
 # --- Sanitization Helper ---
 def clean_code_snippet(code: str) -> str:
@@ -394,7 +372,7 @@ AGENT_TOOLS = [
     }
 ]
 
-# --- Document Attachment Drawer ---
+# --- Ingest Drawer ---
 with st.expander("📎 Ingest Document (PDF)", expanded=False):
     uploaded_pdf = st.file_uploader("Attach PDF", type=["pdf"], label_visibility="collapsed")
     pdf_text = ""
@@ -439,7 +417,7 @@ for idx, msg in enumerate(st.session_state.messages):
                 use_container_width=True
             )
 
-# --- User Input & Resilient ReAct Engine ---
+# --- User Input & Resilient Multi-Model Cascade ---
 user_input = st.chat_input("Ask ORYN Agent (e.g. plot data, calculate math, search web)...")
 
 if user_input:
@@ -478,33 +456,49 @@ if user_input:
             generated_plot = None
             step_tool_count = 0
 
+            # Construct resilient model fallback order
+            candidate_models = [active_model] + [m for m in RELIABLE_TOOL_MODELS if m != active_model]
+            current_model_idx = 0
+
             while iteration < max_iterations:
                 iteration += 1
-                try:
-                    response = client.chat.completions.create(
-                        model=active_model,
-                        messages=agent_messages,
-                        tools=AGENT_TOOLS,
-                        tool_choice="auto",
-                        max_tokens=850
-                    )
-                except Exception as err:
-                    err_str = str(err).lower()
-                    # Resilient Auto-Fallback: If the selected model cannot accept tools, call without tools
-                    if "tool calling is not supported" in err_str or "param': 'tool calling'" in err_str:
-                        status_container.write("ℹ️ Model does not support tool calling. Switching to direct response...")
-                        try:
-                            response = client.chat.completions.create(
-                                model=active_model,
-                                messages=agent_messages,
-                                max_tokens=850
-                            )
-                        except Exception as inner_err:
-                            final_text = f"Groq Engine Error: {inner_err}"
-                            break
-                    else:
-                        final_text = f"Groq Engine Error: {err}"
+                response = None
+                
+                # Cascade attempt across verified models
+                for model_candidate in candidate_models[current_model_idx:]:
+                    try:
+                        response = client.chat.completions.create(
+                            model=model_candidate,
+                            messages=agent_messages,
+                            tools=AGENT_TOOLS,
+                            tool_choice="auto",
+                            max_tokens=850
+                        )
                         break
+                    except Exception as err:
+                        err_str = str(err).lower()
+                        # If model fails tool calling or does not exist, advance to next model
+                        if any(kw in err_str for kw in ["tool calling", "not supported", "404", "model_not_found"]):
+                            status_container.write(f"🔄 Switching engine from `{model_candidate}`...")
+                            current_model_idx += 1
+                            continue
+                        else:
+                            # Direct conversation fallback without tools
+                            try:
+                                response = client.chat.completions.create(
+                                    model=model_candidate,
+                                    messages=agent_messages,
+                                    max_tokens=850
+                                )
+                                break
+                            except Exception as inner_err:
+                                final_text = f"Groq Engine Error: {inner_err}"
+                                break
+
+                if not response:
+                    if not final_text:
+                        final_text = "No compatible model could complete the request."
+                    break
 
                 response_message = response.choices[0].message
                 agent_messages.append(response_message)
@@ -558,7 +552,7 @@ if user_input:
                     final_text = response_message.content or getattr(response_message, "reasoning", "")
                     break
 
-            # Force executive synthesis if iteration limit hit without conclusion
+            # Synthesis fallback if iterations completed without output
             if not final_text:
                 status_container.write("📝 *Synthesizing executive summary...*")
                 agent_messages.append({
@@ -566,8 +560,9 @@ if user_input:
                     "content": "Synthesize a clear, detailed executive summary based on the calculations and tool outputs generated above. Do not invoke additional tools."
                 })
                 try:
+                    chosen_m = candidate_models[min(current_model_idx, len(candidate_models)-1)]
                     synth_response = client.chat.completions.create(
-                        model=active_model,
+                        model=chosen_m,
                         messages=agent_messages,
                         max_tokens=850
                     )
@@ -575,7 +570,7 @@ if user_input:
                 except Exception as e:
                     final_text = f"Synthesis note: Calculations executed. Summary error: {e}"
 
-            # Fallback code interceptor if model output raw markdown
+            # Intercept inline code blocks if model bypassed tool
             if not generated_plot and ("```python" in final_text or "plt." in final_text):
                 status_container.write("⚡ *Executing inline plot script...*")
                 code_matches = re.findall(r"```(?:python)?\s*(.*?)\s*```", final_text, re.DOTALL)
