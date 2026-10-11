@@ -10,7 +10,7 @@ import sympy
 from sympy import symbols, Symbol, Eq, solve, simplify, Rational
 from duckduckgo_search import DDGS
 
-# --- Page Configuration (Mobile-First) ---
+# --- Page Configuration (Mobile-Optimized) ---
 st.set_page_config(
     page_title="ORYN Agent — Unified",
     page_icon="✦",
@@ -26,7 +26,6 @@ st.markdown("""
         font-family: 'Google Sans', -apple-system, BlinkMacSystemFont, sans-serif;
     }
     
-    /* Header Area */
     .oryn-header {
         position: sticky;
         top: 0;
@@ -58,7 +57,6 @@ st.markdown("""
         margin: 2px 0 0 0;
     }
 
-    /* Chat Messages */
     div[data-testid="stChatMessage"]:has(div[data-testid="stChatMessageAvatarUser"]) {
         background-color: #f3e8ff !important;
         border-radius: 16px !important;
@@ -85,7 +83,6 @@ st.markdown("""
         font-size: 0.95rem !important;
     }
     
-    /* Code Blocks */
     code {
         background-color: #ede9fe !important;
         color: #581c87 !important;
@@ -95,7 +92,6 @@ st.markdown("""
         word-break: break-word !important;
     }
     
-    /* Touch Target Buttons */
     .stDownloadButton button, .stButton button {
         min-height: 42px !important;
         border-radius: 10px !important;
@@ -104,7 +100,6 @@ st.markdown("""
         transition: all 0.2s ease !important;
     }
 
-    /* Mobile Viewport Tweaks */
     @media screen and (max-width: 768px) {
         .block-container {
             padding-top: 1rem !important;
@@ -156,17 +151,17 @@ if "telemetry" not in st.session_state:
         "breakdown": {"python": 0, "web": 0, "wiki": 0}
     }
 
-# Verified tool-calling models on Groq
-RELIABLE_TOOL_MODELS = [
-    "llama-3.1-8b-instant",       # Primary: high availability, no 404s, full tool calling
-    "llama-3.3-70b-versatile",    # Secondary: 70B reasoning
-    "llama-3.1-70b-versatile"     # Fallback: 70B variant
+# Top reliable models prioritizing tool-use capabilities
+PREFERRED_MODELS = [
+    "llama-3.1-8b-instant",
+    "llama-3.3-70b-versatile",
+    "openai/gpt-oss-120b"
 ]
 
-# Quick Reset Bar for Mobile
+# Quick Reset Bar
 col_hdr_l, col_hdr_r = st.columns([3, 1])
 with col_hdr_r:
-    if st.button("🗑️ Reset", use_container_width=True, help="Clear chat and restart session"):
+    if st.button("🗑️ Reset", use_container_width=True, help="Clear chat"):
         st.session_state.messages = []
         st.session_state.telemetry = {
             "queries": 0, "tool_calls": 0, "last_latency_s": 0.0, "tokens_est": 0,
@@ -182,26 +177,35 @@ with st.sidebar:
         "Groq API Key:",
         value=st.session_state.api_key,
         type="password",
-        help="Store permanently: Streamlit Cloud -> Manage app -> Settings -> Secrets"
+        help="Permanent key: Streamlit Cloud -> Settings -> Secrets"
     )
     if key_input:
         st.session_state.api_key = key_input.strip()
 
     client = Groq(api_key=st.session_state.api_key) if st.session_state.api_key else None
 
-    # Discover and populate models
-    usable_models = []
+    # Discover account models and sort tool-friendly ones to the top
+    available_models = []
     if client:
         try:
-            account_models = [m.id for m in client.models.list().data]
-            usable_models = [m for m in RELIABLE_TOOL_MODELS if m in account_models]
+            raw_models = [m.id for m in client.models.list().data]
+            banned = ["whisper", "guard", "vision", "embed", "safeguard", "orpheus", "canopy", "audio", "tts"]
+            available_models = [m for m in raw_models if not any(b in m.lower() for b in banned)]
+            
+            def sort_models(m):
+                m_low = m.lower()
+                if "3.1-8b" in m_low: return 0
+                if "3.3-70b" in m_low: return 1
+                if "70b" in m_low: return 2
+                return 10
+            available_models.sort(key=sort_models)
         except Exception:
-            usable_models = []
+            available_models = []
 
-    if not usable_models:
-        usable_models = RELIABLE_TOOL_MODELS
+    if not available_models:
+        available_models = PREFERRED_MODELS
 
-    active_model = st.selectbox("Active Model Engine:", options=usable_models, index=0)
+    active_model = st.selectbox("Active Model Engine:", options=available_models, index=0)
     hitl_enabled = st.toggle("🛡️ HITL Safety Guardrails", value=True)
 
     st.markdown("---")
@@ -417,7 +421,7 @@ for idx, msg in enumerate(st.session_state.messages):
                 use_container_width=True
             )
 
-# --- User Input & Resilient Multi-Model Cascade ---
+# --- User Input & Resilient ReAct Engine ---
 user_input = st.chat_input("Ask ORYN Agent (e.g. plot data, calculate math, search web)...")
 
 if user_input:
@@ -436,9 +440,8 @@ if user_input:
             "- Never identify as ChatGPT or state that you were created by OpenAI.\n"
             "- If asked about privacy or your owner, clarify that you are ORYN Agent running an independent session without third-party monitoring.\n"
             "TOOL RULES:\n"
-            "- If the user asks for a chart, graph, plot, or calculation, call `python_interpreter`.\n"
-            "- Write executable Python code in the tool call arguments without markdown formatting.\n"
-            "- After calling tools, synthesize a detailed executive summary answering all aspects of the user's request."
+            "- If the user asks for a chart, graph, plot, or calculation, call `python_interpreter` or output executable Python code.\n"
+            "- Deliver clear, direct answers and concise executive summaries."
         )
         if pdf_text:
             system_prompt += f"\n\nContext from ingested PDF:\n{pdf_text}"
@@ -456,54 +459,44 @@ if user_input:
             generated_plot = None
             step_tool_count = 0
 
-            # Construct resilient model fallback order
-            candidate_models = [active_model] + [m for m in RELIABLE_TOOL_MODELS if m != active_model]
-            current_model_idx = 0
-
             while iteration < max_iterations:
                 iteration += 1
                 response = None
                 
-                # Cascade attempt across verified models
-                for model_candidate in candidate_models[current_model_idx:]:
-                    try:
-                        response = client.chat.completions.create(
-                            model=model_candidate,
-                            messages=agent_messages,
-                            tools=AGENT_TOOLS,
-                            tool_choice="auto",
-                            max_tokens=850
-                        )
+                # Attempt 1: Call with Tool Definitions
+                try:
+                    response = client.chat.completions.create(
+                        model=active_model,
+                        messages=agent_messages,
+                        tools=AGENT_TOOLS,
+                        tool_choice="auto",
+                        max_tokens=850
+                    )
+                except Exception as err:
+                    err_msg = str(err).lower()
+                    # If model rejects tool calling (HTTP 400), silently fallback to direct conversation without tools
+                    if "tool" in err_msg or "400" in err_msg or "param" in err_msg:
+                        try:
+                            response = client.chat.completions.create(
+                                model=active_model,
+                                messages=agent_messages,
+                                max_tokens=850
+                            )
+                        except Exception as inner_err:
+                            final_text = f"Groq Engine Error: {inner_err}"
+                            break
+                    else:
+                        final_text = f"Groq Engine Error: {err}"
                         break
-                    except Exception as err:
-                        err_str = str(err).lower()
-                        # If model fails tool calling or does not exist, advance to next model
-                        if any(kw in err_str for kw in ["tool calling", "not supported", "404", "model_not_found"]):
-                            status_container.write(f"🔄 Switching engine from `{model_candidate}`...")
-                            current_model_idx += 1
-                            continue
-                        else:
-                            # Direct conversation fallback without tools
-                            try:
-                                response = client.chat.completions.create(
-                                    model=model_candidate,
-                                    messages=agent_messages,
-                                    max_tokens=850
-                                )
-                                break
-                            except Exception as inner_err:
-                                final_text = f"Groq Engine Error: {inner_err}"
-                                break
 
                 if not response:
-                    if not final_text:
-                        final_text = "No compatible model could complete the request."
                     break
 
                 response_message = response.choices[0].message
                 agent_messages.append(response_message)
 
-                if response_message.tool_calls:
+                # Process Tool Invocations if returned
+                if getattr(response_message, "tool_calls", None):
                     for tool_call in response_message.tool_calls:
                         step_tool_count += 1
                         fn_name = tool_call.function.name
@@ -552,25 +545,7 @@ if user_input:
                     final_text = response_message.content or getattr(response_message, "reasoning", "")
                     break
 
-            # Synthesis fallback if iterations completed without output
-            if not final_text:
-                status_container.write("📝 *Synthesizing executive summary...*")
-                agent_messages.append({
-                    "role": "user",
-                    "content": "Synthesize a clear, detailed executive summary based on the calculations and tool outputs generated above. Do not invoke additional tools."
-                })
-                try:
-                    chosen_m = candidate_models[min(current_model_idx, len(candidate_models)-1)]
-                    synth_response = client.chat.completions.create(
-                        model=chosen_m,
-                        messages=agent_messages,
-                        max_tokens=850
-                    )
-                    final_text = synth_response.choices[0].message.content or "Analysis completed."
-                except Exception as e:
-                    final_text = f"Synthesis note: Calculations executed. Summary error: {e}"
-
-            # Intercept inline code blocks if model bypassed tool
+            # Fallback Interceptor: Execute embedded Python code if model wrote markdown
             if not generated_plot and ("```python" in final_text or "plt." in final_text):
                 status_container.write("⚡ *Executing inline plot script...*")
                 code_matches = re.findall(r"```(?:python)?\s*(.*?)\s*```", final_text, re.DOTALL)
@@ -582,6 +557,9 @@ if user_input:
 
             elapsed = time.perf_counter() - start_time
             status_container.update(label=f"✅ Execution Complete ({elapsed:.2f}s)", state="complete", expanded=False)
+
+            if not final_text:
+                final_text = "Task completed."
 
             # Update Telemetry
             st.session_state.telemetry["queries"] += 1
