@@ -126,7 +126,7 @@ st.markdown("""
 <div class="oryn-header">
     <div class="oryn-brand">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="#4a148c" xmlns="http://www.w3.org/2000/svg">
-            <path d="M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.771-4.2057 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7467-7.0731zM13.2599 22.4042a4.4568 4.4568 0 0 1-2.9001-1.0543l.1422-.0818 4.811-2.778a.791.791 0 0 0 .3955-.6855v-6.786l2.1643 1.25a.1582.1582 0 0 1 .0791.137v5.545a4.4628 4.4628 0 0 1-4.692 4.4536zM3.8205 18.0645a4.4568 4.4568 0 0 1-.5157-3.0568l.1422.0853 4.811-2.778a.791.791 0 0 0 .791 0l5.8753-3.3934v2.5a.1582.1582 0 0 1-.0791.137l-4.8 2.7717a4.4628 4.4628 0 0 1-6.2247-1.8218zm-1.8218-9.4264a4.4568 4.4568 0 0 1 2.3844-2.0025v5.7176a.791.791 0 0 0 .3955.6855l5.8753 3.3934-2.1643 1.25a.1582.1582 0 0 1-.1582 0l-4.8-2.7717a4.4628 4.4628 0 0 1-1.5327-6.2723zm13.931-1.0543-5.8753-3.3934 2.1643-1.25a.1582.1582 0 0 1 .1582 0l4.8 2.7717a4.4628 4.4628 0 0 1-.5157 8.5292v-5.972a.791.791 0 0 0-.7315-.6855zm3.8205 6.3686a4.4568 4.4568 0 0 1 .5157 3.0568l-.1422-.0853-4.811-2.778a.791.791 0 0 0-.791 0l-5.8753 3.3934v-2.5a.1582.1582 0 0 1 .0791-.137l4.8-2.7717a4.4628 4.4628 0 0 1 6.2247 1.8218zM10.7401 13.0847l-2.6105-1.507 2.6105-1.507 2.6105 1.507z"/>
+            <path d="M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.771-4.2057 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7467-7.0731zM13.2599 22.4042a4.4568 4.4568 0 0 1-2.9001-1.0543l.1422-.0818 4.811-2.778a.791.791 0 0 0 .3955-.6855v-6.786l2.1643 1.25a.1582.1582 0 0 1 .0791.137v5.545a4.4628 4.4628 0 0 1-4.692 4.4536zM3.8205 18.0645a4.4568 4.4568 0 0 1-.5157-3.0568l.1422.0853 4.811 2.778a.791.791 0 0 0 .791 0l5.8753-3.3934v2.5a.1582.1582 0 0 1-.0791.137l-4.8 2.7717a4.4628 4.4628 0 0 1-6.2247-1.8218zm-1.8218-9.4264a4.4568 4.4568 0 0 1 2.3844-2.0025v5.7176a.791.791 0 0 0 .3955.6855l5.8753 3.3934-2.1643 1.25a.1582.1582 0 0 1-.1582 0l-4.8-2.7717a4.4628 4.4628 0 0 1-1.5327-6.2723zm13.931-1.0543-5.8753-3.3934 2.1643-1.25a.1582.1582 0 0 1 .1582 0l4.8 2.7717a4.4628 4.4628 0 0 1-.5157 8.5292v-5.972a.791.791 0 0 0-.7315-.6855zm3.8205 6.3686a4.4568 4.4568 0 0 1 .5157 3.0568l-.1422-.0853-4.811-2.778a.791.791 0 0 0-.791 0l-5.8753 3.3934v-2.5a.1582.1582 0 0 1 .0791-.137l4.8-2.7717a4.4628 4.4628 0 0 1 6.2247 1.8218zM10.7401 13.0847l-2.6105-1.507 2.6105-1.507 2.6105 1.507z"/>
         </svg>
         <h1 class="oryn-title">ORYN ANALYST</h1>
     </div>
@@ -203,13 +203,17 @@ with st.sidebar:
 
     client = Groq(api_key=st.session_state.api_key) if st.session_state.api_key else None
 
-    # Discover live active models dynamically
+    # Discover live active models dynamically (strictly tool-compatible)
     discovered_models = []
+    preferred_tool_models = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
     if client:
         try:
             raw_models = [m.id for m in client.models.list().data]
-            banned = ["whisper", "guard", "embed", "safeguard", "orpheus", "canopy", "audio", "tts"]
-            discovered_models = [m for m in raw_models if not any(b in m.lower() for b in banned)]
+            discovered_models = [m for m in preferred_tool_models if m in raw_models]
+            banned = ["whisper", "guard", "embed", "safeguard", "orpheus", "canopy", "audio", "tts", "r1", "gemma", "mixtral", "vision", "preview"]
+            for m in raw_models:
+                if m not in discovered_models and not any(b in m.lower() for b in banned):
+                    discovered_models.append(m)
         except Exception:
             discovered_models = []
 
@@ -256,13 +260,12 @@ def clean_code_snippet(code: str) -> str:
 
 def strip_leaked_code(text: str) -> str:
     """Strips accidental raw Python code, markdown glitches, and unwanted HTML tags."""
-    # Strip Python script dumps
     raw_script_pattern = r"(?:import\s+(?:matplotlib|pandas|numpy|plt|yf)[\s\S]*?(?:plt\.show\(\)|plt\.tight_layout\(\)|plt\.close\(\)))"
     text = re.sub(raw_script_pattern, "\n*(Visual chart artifact rendered below)*\n", text)
     code_block_pattern = r"```(?:python)?\s*(?:import\s+(?:matplotlib|plt)|plt\.)[\s\S]*?```"
     text = re.sub(code_block_pattern, "\n*(Visual chart artifact rendered below)*\n", text)
     
-    # Strip unwanted HTML tags and hallucinated placeholders
+    # Clean HTML tags and formatting quirks
     text = text.replace("</br>", " ").replace("<br>", " ")
     text = re.sub(r"\[Image:\s*[^\]]+\]", "", text)
     text = re.sub(r"\*\s+\*", "", text)
@@ -792,28 +795,46 @@ if user_input:
                     final_text = response_message.content or ""
                     break
 
-            # Guaranteed Synthesis: Safely synthesize without allowing additional tool invocations
+            # Guaranteed Synthesis: Text-only briefing without tool-calling conflicts
             if step_tool_count > 0 and (not final_text or len(final_text.strip()) == 0):
                 status_container.write("📝 *Synthesizing briefing...*")
-                agent_messages.append({
-                    "role": "user",
-                    "content": (
-                        "Synthesize a structured executive briefing based on the tool outputs above. "
-                        "Do NOT include any Python code, scripts, or import statements in your text response. "
-                        "Present only clean markdown tables, financial metrics, and executive takeaways."
-                    )
-                })
-                try:
-                    synth_resp = client.chat.completions.create(
-                        model=active_model,
-                        messages=agent_messages,
-                        tools=AGENT_TOOLS,
-                        tool_choice="none",
-                        max_tokens=2048
-                    )
-                    final_text = synth_resp.choices[0].message.content or "Analysis completed."
-                except Exception as e:
-                    final_text = f"Synthesis note: {e}"
+                
+                tool_data_dump = "\n\n".join([
+                    f"[{m.get('name', 'Data Output')}]:\n{m.get('content', '')}"
+                    for m in agent_messages if m.get("role") == "tool"
+                ])
+                
+                synth_messages = [
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are ORYN Analyst, an institutional BFSI quantitative analyst built by Mriganka. "
+                            "Synthesize the user's inquiry and the retrieved data into a clean, comprehensive executive briefing. "
+                            "Present structured markdown tables, percentage drawdowns, and institutional takeaways. "
+                            "Do NOT write Python code or function calls. Do NOT use LaTeX tags or math blocks ($$)."
+                        )
+                    },
+                    {
+                        "role": "user",
+                        "content": (
+                            f"User Inquiry: {user_input}\n\n"
+                            f"Retrieved Tool Data & Model Results:\n{tool_data_dump}\n\n"
+                            "Deliver the final executive briefing in clean markdown now."
+                        )
+                    }
+                ]
+                
+                for candidate in candidate_models:
+                    try:
+                        synth_resp = client.chat.completions.create(
+                            model=candidate,
+                            messages=synth_messages,
+                            max_tokens=2048
+                        )
+                        final_text = synth_resp.choices[0].message.content or "Analysis completed."
+                        break
+                    except Exception as e:
+                        final_text = f"Synthesis note: {e}"
 
             # Fallback code interceptor
             if not generated_plot and ("```python" in final_text or "plt." in final_text):
