@@ -368,6 +368,8 @@ def tool_python_interpreter(code: str) -> tuple[str, bytes | None, bytes | None]
             plt.close('all')
 
         # Check for DataFrame to export Excel model
+        # Check for DataFrame to export Excel model
+        df_representation = ""
         for var_name, var_val in scope.items():
             if isinstance(var_val, pd.DataFrame) and not var_name.startswith("_"):
                 x_buf = io.BytesIO()
@@ -382,11 +384,20 @@ def tool_python_interpreter(code: str) -> tuple[str, bytes | None, bytes | None]
                         worksheet.column_dimensions[col_letter].width = max(max_len + 3, 12)
                 x_buf.seek(0)
                 excel_bytes = x_buf.getvalue()
+                
+                # Capture the exact DataFrame table to pass to the LLM
+                df_representation = f"\n\n[Exported DataFrame `{var_name}`]:\n" + var_val.to_string()
                 break
 
         output = stdout_trap.getvalue().strip()
-        return (output if output else "Calculations executed successfully."), plot_bytes, excel_bytes
-    except Exception as e:
+        if not output and df_representation:
+            output = "Calculations executed successfully." + df_representation
+        elif output and df_representation and df_representation not in output:
+            output += df_representation
+        elif not output:
+            output = "Calculations executed successfully."
+
+        return output, plot_bytes, excel_bytes    except Exception as e:
         plt.close('all')
         return f"Python Execution Error: {e}", None, None
     finally:
