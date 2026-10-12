@@ -126,7 +126,7 @@ st.markdown("""
 <div class="oryn-header">
     <div class="oryn-brand">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="#4a148c" xmlns="http://www.w3.org/2000/svg">
-            <path d="M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.771-4.2057 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7467-7.0731zM13.2599 22.4042a4.4568 4.4568 0 0 1-2.9001-1.0543l.1422-.0818 4.811-2.778a.791.791 0 0 0 .3955-.6855v-6.786l2.1643 1.25a.1582.1582 0 0 1 .0791.137v5.545a4.4628 4.4628 0 0 1-4.692 4.4536zM3.8205 18.0645a4.4568 4.4568 0 0 1-.5157-3.0568l.1422.0853 4.811 2.778a.791.791 0 0 0 .791 0l5.8753-3.3934v2.5a.1582.1582 0 0 1-.0791.137l-4.8 2.7717a4.4628 4.4628 0 0 1-6.2247-1.8218zm-1.8218-9.4264a4.4568 4.4568 0 0 1 2.3844-2.0025v5.7176a.791.791 0 0 0 .3955.6855l5.8753 3.3934-2.1643 1.25a.1582.1582 0 0 1-.1582 0l-4.8-2.7717a4.4628 4.4628 0 0 1-1.5327-6.2723zm13.931-1.0543-5.8753-3.3934 2.1643-1.25a.1582.1582 0 0 1 .1582 0l4.8 2.7717a4.4628 4.4628 0 0 1-.5157 8.5292v-5.972a.791.791 0 0 0-.7315-.6855zm3.8205 6.3686a4.4568 4.4568 0 0 1 .5157 3.0568l-.1422-.0853-4.811-2.778a.791.791 0 0 0-.791 0l-5.8753 3.3934v-2.5a.1582.1582 0 0 1 .0791-.137l4.8-2.7717a4.4628 4.4628 0 0 1 6.2247 1.8218zM10.7401 13.0847l-2.6105-1.507 2.6105-1.507 2.6105 1.507z"/>
+            <path d="M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.771-4.2057 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7467-7.0731zM13.2599 22.4042a4.4568 4.4568 0 0 1-2.9001-1.0543l.1422-.0818 4.811-2.778a.791.791 0 0 0 .3955-.6855v-6.786l2.1643 1.25a.1582.1582 0 0 1 .0791.137v5.545a4.4628 4.4628 0 0 1-4.692 4.4536zM3.8205 18.0645a4.4568 4.4568 0 0 1-.5157-3.0568l.1422.0853 4.811-2.778a.791.791 0 0 0 .791 0l5.8753-3.3934v2.5a.1582.1582 0 0 1-.0791.137l-4.8 2.7717a4.4628 4.4628 0 0 1-6.2247-1.8218zm-1.8218-9.4264a4.4568 4.4568 0 0 1 2.3844-2.0025v5.7176a.791.791 0 0 0 .3955.6855l5.8753 3.3934-2.1643 1.25a.1582.1582 0 0 1-.1582 0l-4.8-2.7717a4.4628 4.4628 0 0 1-1.5327-6.2723zm13.931-1.0543-5.8753-3.3934 2.1643-1.25a.1582.1582 0 0 1 .1582 0l4.8 2.7717a4.4628 4.4628 0 0 1-.5157 8.5292v-5.972a.791.791 0 0 0-.7315-.6855zm3.8205 6.3686a4.4568 4.4568 0 0 1 .5157 3.0568l-.1422-.0853-4.811-2.778a.791.791 0 0 0-.791 0l-5.8753 3.3934v-2.5a.1582.1582 0 0 1 .0791-.137l4.8-2.7717a4.4628 4.4628 0 0 1 6.2247 1.8218zM10.7401 13.0847l-2.6105-1.507 2.6105-1.507 2.6105 1.507z"/>
         </svg>
         <h1 class="oryn-title">ORYN ANALYST</h1>
     </div>
@@ -244,7 +244,7 @@ with st.sidebar:
     b = st.session_state.telemetry["breakdown"]
     st.text(f"Python: {b['python']} | Market: {b['finance']} | Docs: {b['doc_search']} | Web: {b['web']}")
 
-# --- Helpers: Code Sanitizer, Leaked-Script Remover, & HTML Builder ---
+# --- Helpers: Code Sanitizer, Post-Processing Stripper, & HTML Builder ---
 def clean_code_snippet(code: str) -> str:
     cleaned_lines = []
     for line in code.strip().splitlines():
@@ -255,11 +255,18 @@ def clean_code_snippet(code: str) -> str:
     return "\n".join(cleaned_lines).strip()
 
 def strip_leaked_code(text: str) -> str:
-    """Strips accidental raw Python code that the LLM dumped into the text response."""
+    """Strips accidental raw Python code, markdown glitches, and unwanted HTML tags."""
+    # Strip Python script dumps
     raw_script_pattern = r"(?:import\s+(?:matplotlib|pandas|numpy|plt|yf)[\s\S]*?(?:plt\.show\(\)|plt\.tight_layout\(\)|plt\.close\(\)))"
     text = re.sub(raw_script_pattern, "\n*(Visual chart artifact rendered below)*\n", text)
     code_block_pattern = r"```(?:python)?\s*(?:import\s+(?:matplotlib|plt)|plt\.)[\s\S]*?```"
     text = re.sub(code_block_pattern, "\n*(Visual chart artifact rendered below)*\n", text)
+    
+    # Strip unwanted HTML tags and hallucinated placeholders
+    text = text.replace("</br>", " ").replace("<br>", " ")
+    text = re.sub(r"\[Image:\s*[^\]]+\]", "", text)
+    text = re.sub(r"\*\s+\*", "", text)
+    text = text.replace(r"\approx", "≈").replace(r"\times", "×")
     return text.strip()
 
 def markdown_to_clean_html(text: str) -> str:
@@ -334,7 +341,7 @@ def build_html_report(text: str, plot_bytes: bytes | None) -> str:
 </body>
 </html>"""
 
-# --- Python Sandbox with OpenPyxl Excel Styler ---
+# --- Python Sandbox with OpenPyxl Excel Styler & Context Sync ---
 def tool_python_interpreter(code: str) -> tuple[str, bytes | None, bytes | None]:
     code = clean_code_snippet(code)
     if hitl_enabled:
@@ -384,7 +391,7 @@ def tool_python_interpreter(code: str) -> tuple[str, bytes | None, bytes | None]
                 x_buf.seek(0)
                 excel_bytes = x_buf.getvalue()
                 
-                # Capture exact calculated table for LLM context
+                # Capture exact calculated table for LLM context synchronization
                 df_representation = f"\n\n[Exported DataFrame `{var_name}`]:\n" + var_val.to_string()
                 break
 
@@ -403,6 +410,7 @@ def tool_python_interpreter(code: str) -> tuple[str, bytes | None, bytes | None]
         return f"Python Execution Error: {e}", None, None
     finally:
         sys.stdout = sys_stdout_backup
+
 # --- Currency Normalizer Helper ---
 def fetch_usd_conversion_rate(currency: str) -> float:
     curr = currency.upper().strip()
@@ -666,21 +674,20 @@ if user_input:
             st.error("Please supply a valid Groq API Key.")
     else:
         system_prompt = (
-            "You are ORYN Analyst, an autonomous quantitative, banking, and market intelligence analyst built by Mriganka.\n"
-            "BEHAVIOR & EXECUTION RULES:\n"
-            "1. CURRENCY INTEGRITY IS PARAMOUNT:\n"
-            "   - When comparing companies listed in different native currencies (e.g. India INR vs US USD), ALWAYS look at 'Normalized Market Cap (USD)' for relative scale comparisons.\n"
-            "   - NEVER compare raw numeric figures across currencies without conversion. NEVER label an Indian Rupee amount as USD ($).\n"
+            "You are ORYN Analyst, an institutional BFSI quantitative analyst built by Mriganka.\n"
+            "CORE EXECUTION RULES:\n"
+            "1. STRICT QUANTITATIVE FORMULAS:\n"
+            "   - '% off 52W High' must ALWAYS be calculated as negative drawdown: ((Current Price - 52W High) / 52W High) * 100. Round all percentages to 2 decimals.\n"
+            "   - For comps tables, sort rows logically (e.g., descending by Market Cap).\n"
+            "2. NO LATEX & CLEAN TEXT FORMATTING:\n"
+            "   - NEVER use LaTeX tags like \\approx, \\times, or math blocks ($$). Write plain text (e.g., 'approx. 15%').\n"
+            "   - NEVER output HTML tags like </br> or image placeholders like '[Image: ...]'.\n"
+            "   - NEVER dump Python scripts into text; run code silently using python_interpreter.\n"
+            "3. CURRENCY INTEGRITY:\n"
+            "   - When comparing multi-currency companies, ALWAYS use 'Normalized Market Cap (USD)' for relative scale comparisons.\n"
             "   - For Indian domestic companies (.NS / .BO), state native metrics in Indian Rupees ('₹', Lakhs, Crores) alongside the normalized USD figures.\n"
-            "2. CODE HYGIENE (CRITICAL):\n"
-            "   - NEVER print raw Python code, plotting scripts, or 'import matplotlib' in your written text briefing.\n"
-            "   - All calculations and plots must be executed SILENTLY by calling the `python_interpreter` tool.\n"
-            "   - In your written text, provide only clean tables, financial metrics, and executive takeaways.\n"
-            "3. REGULATORY & BANKING QUERIES:\n"
-            "   - For Indian banking (SBI, RBI, TDS, Section 194A, Form 15G/15H, deceased depositors), ALWAYS use ₹ (INR), never $ (USD).\n"
-            "4. DELIVERABLE STRUCTURE:\n"
-            "   - For simple direct queries, answer directly without forcing financial templates.\n"
-            "   - For corporate research, call `get_financial_data` for each ticker, invoke `python_interpreter` to plot charts and create `df`, and write a clean executive briefing."
+            "4. REGULATORY & BANKING QUERIES:\n"
+            "   - For Indian banking (SBI, RBI, TDS, Section 194A, Form 15G/15H), ALWAYS use ₹ (INR), never $ (USD)."
         )
 
         if st.session_state.last_image_name and not st.session_state.image_insights:
@@ -718,7 +725,7 @@ if user_input:
                             messages=agent_messages,
                             tools=AGENT_TOOLS,
                             tool_choice="auto",
-                            max_tokens=900
+                            max_tokens=2048
                         )
                         break
                     except Exception:
@@ -785,7 +792,7 @@ if user_input:
                     final_text = response_message.content or ""
                     break
 
-            # Guaranteed Synthesis: Only trigger if tools ran in THIS turn and no output text was delivered
+            # Guaranteed Synthesis: Safely synthesize without allowing additional tool invocations
             if step_tool_count > 0 and (not final_text or len(final_text.strip()) == 0):
                 status_container.write("📝 *Synthesizing briefing...*")
                 agent_messages.append({
@@ -793,14 +800,16 @@ if user_input:
                     "content": (
                         "Synthesize a structured executive briefing based on the tool outputs above. "
                         "Do NOT include any Python code, scripts, or import statements in your text response. "
-                        "Present only clean tables, financial metrics, and executive takeaways."
+                        "Present only clean markdown tables, financial metrics, and executive takeaways."
                     )
                 })
                 try:
                     synth_resp = client.chat.completions.create(
                         model=active_model,
                         messages=agent_messages,
-                        max_tokens=900
+                        tools=AGENT_TOOLS,
+                        tool_choice="none",
+                        max_tokens=2048
                     )
                     final_text = synth_resp.choices[0].message.content or "Analysis completed."
                 except Exception as e:
@@ -815,7 +824,7 @@ if user_input:
                 if p_bytes: generated_plot = p_bytes
                 if x_bytes: generated_excel = x_bytes
 
-            # Sanitize any accidental code leakage before display
+            # Sanitize any accidental code leakage or markdown glitches before display
             final_text = strip_leaked_code(final_text)
 
             elapsed = time.perf_counter() - start_time
