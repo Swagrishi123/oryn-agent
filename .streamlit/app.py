@@ -148,9 +148,9 @@ with st.sidebar:
     if key_input:
         st.session_state.api_key = key_input.strip()
 
-    active_model = st.selectbox(
+   active_model = st.selectbox(
         "Reasoning Engine:",
-        options=["llama-3.1-8b-instant", "llama-3.3-70b-versatile"],
+        options=["llama-3.1-8b-instant", "llama-3.1-70b-versatile"],
         index=0,
         help="Use 8b-instant for fast, rate-limit-free execution on free tiers."
     )
