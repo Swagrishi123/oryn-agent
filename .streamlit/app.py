@@ -368,7 +368,6 @@ def tool_python_interpreter(code: str) -> tuple[str, bytes | None, bytes | None]
             plt.close('all')
 
         # Check for DataFrame to export Excel model
-        # Check for DataFrame to export Excel model
         df_representation = ""
         for var_name, var_val in scope.items():
             if isinstance(var_val, pd.DataFrame) and not var_name.startswith("_"):
@@ -385,7 +384,7 @@ def tool_python_interpreter(code: str) -> tuple[str, bytes | None, bytes | None]
                 x_buf.seek(0)
                 excel_bytes = x_buf.getvalue()
                 
-                # Capture the exact DataFrame table to pass to the LLM
+                # Capture exact calculated table for LLM context
                 df_representation = f"\n\n[Exported DataFrame `{var_name}`]:\n" + var_val.to_string()
                 break
 
@@ -397,12 +396,13 @@ def tool_python_interpreter(code: str) -> tuple[str, bytes | None, bytes | None]
         elif not output:
             output = "Calculations executed successfully."
 
-        return output, plot_bytes, excel_bytes    except Exception as e:
+        return output, plot_bytes, excel_bytes
+
+    except Exception as e:
         plt.close('all')
         return f"Python Execution Error: {e}", None, None
     finally:
         sys.stdout = sys_stdout_backup
-
 # --- Currency Normalizer Helper ---
 def fetch_usd_conversion_rate(currency: str) -> float:
     curr = currency.upper().strip()
