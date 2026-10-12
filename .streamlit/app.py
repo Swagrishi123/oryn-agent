@@ -1,5 +1,12 @@
 import streamlit as st
 import io, re, base64, datetime
+import importlib, sys
+
+# Force Streamlit Cloud to reload agent.py from disk instead of RAM
+if "agent" in sys.modules:
+    importlib.reload(sys.modules["agent"])
+import agent
+importlib.reload(agent)
 from agent import run_analyst_agent
 
 # --- Page Configuration ---
