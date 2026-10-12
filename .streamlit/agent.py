@@ -57,11 +57,11 @@ def run_analyst_agent(
     generated_excel = None
     step_tool_count = 0
 
+    # Use verified Groq tool-calling models
     model_queue = [selected_model]
-    if "llama-3.1-8b-instant" not in model_queue:
-        model_queue.append("llama-3.1-8b-instant")
-    if "llama-3.3-70b-versatile" not in model_queue:
-        model_queue.append("llama-3.3-70b-versatile")
+    for fallback in ["llama-3.1-8b-instant", "llama-3.1-70b-versatile"]:
+        if fallback not in model_queue:
+            model_queue.append(fallback)
 
     while iteration < max_iterations:
         iteration += 1
