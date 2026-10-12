@@ -201,9 +201,10 @@ with st.sidebar:
     if gemini_input:
         st.session_state.gemini_key = gemini_input.strip()
 
-    client = Groq(api_key=st.session_state.api_key) if st.session_state.api_key else None
+    # Groq Client: max_retries=0 prevents the 60-second freeze on rate-limits
+    client = Groq(api_key=st.session_state.api_key, max_retries=0) if st.session_state.api_key else None
 
-    # Discover live active models dynamically (strictly tool-compatible)
+    # Discover live active models dynamically
     discovered_models = []
     preferred_tool_models = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
     if client:
@@ -702,9 +703,14 @@ if user_input:
             system_prompt += f"\n\nPARSED VISUAL ARTIFACTS / OCR DATA ({st.session_state.last_image_name}):\n{st.session_state.image_insights}"
 
         agent_messages = [{"role": "system", "content": system_prompt}]
-        for m in st.session_state.messages[-4:]:
+        
+        # Token Defense: Pass only recent user queries & condensed assistant turns
+        for m in st.session_state.messages[-3:]:
             if m.get("content"):
-                agent_messages.append({"role": m["role"], "content": m["content"]})
+                c_text = m["content"]
+                if m.get("role") == "assistant" and len(c_text) > 400:
+                    c_text = c_text[:400] + "... [prior analysis abbreviated]"
+                agent_messages.append({"role": m["role"], "content": c_text})
 
         with st.chat_message("assistant"):
             status_container = st.status("🧠 ORYN Analyst is reasoning...", expanded=True)
@@ -716,6 +722,7 @@ if user_input:
             step_tool_count = 0
 
             candidate_models = [active_model] + [m for m in discovered_models if m != active_model]
+            last_engine_error = ""
 
             while iteration < max_iterations:
                 iteration += 1
@@ -731,11 +738,20 @@ if user_input:
                             max_tokens=2048
                         )
                         break
-                    except Exception:
+                    except Exception as exc:
+                        last_engine_error = str(exc)
+                        if "rate_limit" in last_engine_error.lower() or "429" in last_engine_error:
+                            status_container.warning(f"⚠️ {candidate} hit token limits. Auto-switching engine...")
                         continue
 
                 if not response:
-                    final_text = "All model engines failed to process the request."
+                    if "rate_limit" in last_engine_error.lower() or "429" in last_engine_error:
+                        final_text = (
+                            "⚠️ **Groq Token Limit Reached:** You exceeded Groq's Tokens Per Minute (TPM) limit on this model. "
+                            "Please wait 30 seconds for the token bucket to refresh, or switch to **`llama-3.1-8b-instant`** in the sidebar (which has a 5× higher token limit)."
+                        )
+                    else:
+                        final_text = f"All model engines failed to process the request. Details: `{last_engine_error}`"
                     break
 
                 response_message = response.choices[0].message
