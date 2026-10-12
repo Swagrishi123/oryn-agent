@@ -801,7 +801,7 @@ if user_input:
                 
                 tool_data_dump = "\n\n".join([
                     f"[{m.get('name', 'Data Output')}]:\n{m.get('content', '')}"
-                    for m in agent_messages if m.get("role") == "tool"
+                   for m in agent_messages if isinstance(m, dict) and m.get("role") == "tool"
                 ])
                 
                 synth_messages = [
