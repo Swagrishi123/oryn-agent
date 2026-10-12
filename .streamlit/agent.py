@@ -11,12 +11,11 @@ SYSTEM_PROMPT = (
     "1. STRICT QUANTITATIVE FORMULAS:\n"
     "   - '% off 52W High' must ALWAYS be calculated as negative drawdown: ((Current Price - 52W High) / 52W High) * 100. Round all percentages to 2 decimals.\n"
     "   - For comps tables, sort rows logically (e.g., descending by Market Cap).\n"
-    "2. PYTHON TOOL JSON INTEGRITY:\n"
-    "   - When calling python_interpreter, write standard clean Python.\n"
-    "   - In print statements, use standard double quotes (e.g., print(\"Enterprise Value:\", ev)).\n"
-    "   - NEVER escape single quotes with backslashes. Do NOT output invalid JSON characters.\n"
+    "2. PYTHON TOOL CALLING:\n"
+    "   - When calling python_interpreter, use standard double quotes in print statements.\n"
+    "   - Never escape single quotes with backslashes.\n"
     "3. NO LATEX & CLEAN TEXT FORMATTING:\n"
-    "   - NEVER use LaTeX tags like \\approx, \\times, or math blocks ($$). Write plain text (e.g., 'approx. 15%').\n"
+    "   - NEVER use LaTeX tags like \\approx, \\times, or math blocks ($$). Write plain text.\n"
     "   - NEVER output HTML tags like </br> or image placeholders.\n"
     "4. CURRENCY INTEGRITY:\n"
     "   - When comparing multi-currency companies, ALWAYS use 'Normalized Market Cap (USD)' for relative scale comparisons.\n"
@@ -25,17 +24,27 @@ SYSTEM_PROMPT = (
     "   - For Indian banking (SBI, RBI, TDS, Section 194A, Form 15G/15H), ALWAYS use ₹ (INR), never $ (USD)."
 )
 
+def clean_extracted_code(raw_code: str) -> str:
+    clean = raw_code.replace('\\\\n', '\n').replace('\\n', '\n')
+    clean = clean.replace(r'\"', '"').replace(r"\'", "'").replace(r'\\', '\\')
+    lines = clean.split('\n')
+    valid_lines = []
+    for line in lines:
+        stripped = line.strip()
+        if stripped in ['PY', 'PY"', '}', '}}', '```', '```python']:
+            continue
+        if stripped.endswith('PY"') or stripped.endswith('PY'):
+            line = line[:-3].rstrip('"')
+        valid_lines.append(line)
+    return '\n'.join(valid_lines).strip()
+
 def extract_code_from_error(err_str: str) -> str | None:
-    """Extracts raw python code if Groq gateway rejects escaped JSON in tool calls."""
     m_gen = re.search(r"['\"]failed_generation['\"]\s*:\s*['\"](.*?)['\"]\s*\}", err_str, re.DOTALL)
     search_target = m_gen.group(1) if m_gen else err_str
 
     m_code = re.search(r'["\']code["\']\s*:\s*["\'](.*?)(?:["\']\s*\}|\Z)', search_target, re.DOTALL)
     if m_code:
-        raw = m_code.group(1)
-        clean = raw.replace('\\\\n', '\n').replace('\\n', '\n')
-        clean = clean.replace(r'\"', '"').replace(r"\'", "'").replace(r'\\', '\\')
-        return clean.strip()
+        return clean_extracted_code(m_code.group(1))
     return None
 
 def run_analyst_agent(
@@ -59,8 +68,6 @@ def run_analyst_agent(
     generated_plot = None
     generated_excel = None
     step_tool_count = 0
-
-    # Permanently locked to the high-throughput production model
     active_model = "llama-3.1-8b-instant"
 
     while iteration < max_iterations:
@@ -79,7 +86,7 @@ def run_analyst_agent(
         except Exception as e:
             last_error = str(e)
             
-            # Auto-recovery: If Groq rejected single-quote escapes, extract code directly
+            # Auto-recovery: If Groq rejected single-quote escapes, extract and execute directly
             if "Failed to parse tool call arguments as JSON" in last_error or "tool_use_failed" in last_error:
                 extracted_code = extract_code_from_error(last_error)
                 if extracted_code:
@@ -98,7 +105,6 @@ def run_analyst_agent(
                         "content": out
                     })
                     step_tool_count += 1
-                    # Calculations completed via sandbox, break to synthesis
                     break
 
         if not response and step_tool_count == 0:
