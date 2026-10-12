@@ -373,26 +373,72 @@ def tool_python_interpreter(code: str) -> tuple[str, bytes | None, bytes | None]
     finally:
         sys.stdout = sys_stdout_backup
 
-# --- Domain Tools ---
+# --- Currency Normalizer Helper ---
+def fetch_usd_conversion_rate(currency: str) -> float:
+    curr = currency.upper().strip()
+    if curr == "USD":
+        return 1.0
+    try:
+        fx = yf.Ticker(f"{curr}USD=X").fast_info.last_price
+        if fx and fx > 0:
+            return float(fx)
+    except Exception:
+        pass
+    # Fallback exchange rates if live lookup is throttled
+    fallbacks = {
+        "INR": 1.0 / 84.5,
+        "EUR": 1.08,
+        "GBP": 1.28,
+        "JPY": 1.0 / 152.0,
+        "CAD": 0.73,
+        "AUD": 0.65
+    }
+    return fallbacks.get(curr, 1.0)
+
+# --- High-Precision Multi-Currency Market Tool ---
 def tool_get_financial_data(ticker: str, data_type: str = "summary") -> str:
     try:
         sym = ticker.strip().upper()
         t = yf.Ticker(sym)
         fi = t.fast_info
-        price = getattr(fi, 'last_price', None) or getattr(fi, 'previous_close', 'N/A')
-        mcap = getattr(fi, 'market_cap', None)
+        
+        raw_currency = getattr(fi, 'currency', 'USD') or 'USD'
+        raw_currency = raw_currency.upper().strip()
+
+        price = getattr(fi, 'last_price', None) or getattr(fi, 'previous_close', 0.0)
+        mcap = getattr(fi, 'market_cap', 0.0)
         fifty_high = getattr(fi, 'year_high', 'N/A')
         fifty_low = getattr(fi, 'year_low', 'N/A')
-        
-        mcap_str = f"${mcap:,.0f}" if isinstance(mcap, (int, float)) else "N/A"
-        price_str = f"${price:.2f}" if isinstance(price, (int, float)) else str(price)
+
+        sym_map = {"INR": "₹", "USD": "$", "EUR": "€", "GBP": "£", "JPY": "¥"}
+        native_sym = sym_map.get(raw_currency, f"{raw_currency} ")
+
+        usd_rate = fetch_usd_conversion_rate(raw_currency)
+        mcap_usd = (mcap * usd_rate) if isinstance(mcap, (int, float)) and mcap > 0 else None
+        price_usd = (price * usd_rate) if isinstance(price, (int, float)) and price > 0 else None
+
+        # Build clean Indian numbering annotations if INR
+        if raw_currency == "INR" and isinstance(mcap, (int, float)):
+            cr_val = mcap / 1e7
+            lakh_cr = mcap / 1e12
+            local_mcap_str = f"₹{mcap:,.0f} (₹{cr_val:,.2f} Cr / ₹{lakh_cr:.2f} Lakh Cr)"
+        else:
+            local_mcap_str = f"{native_sym}{mcap:,.0f}" if isinstance(mcap, (int, float)) else "N/A"
+
+        usd_mcap_str = (
+            f"${mcap_usd / 1e9:,.2f} Billion USD" if (mcap_usd and mcap_usd >= 1e9)
+            else (f"${mcap_usd / 1e6:,.2f} Million USD" if mcap_usd else "N/A")
+        )
 
         metrics = {
             "Ticker": sym,
-            "Current Price": price_str,
-            "Market Cap": mcap_str,
-            "52W High": fifty_high,
-            "52W Low": fifty_low
+            "Native Currency": raw_currency,
+            "Local Price": f"{native_sym}{price:,.2f}" if isinstance(price, (int, float)) else str(price),
+            "Price (USD Equivalent)": f"${price_usd:,.2f}" if price_usd else "N/A",
+            "Local Market Cap": local_mcap_str,
+            "Normalized Market Cap (USD)": usd_mcap_str,
+            "52W High (Local)": f"{native_sym}{fifty_high:.2f}" if isinstance(fifty_high, (int, float)) else str(fifty_high),
+            "52W Low (Local)": f"{native_sym}{fifty_low:.2f}" if isinstance(fifty_low, (int, float)) else str(fifty_low)
         }
         return json.dumps(metrics, indent=2)
     except Exception as e:
@@ -443,10 +489,10 @@ AGENT_TOOLS = [
         "type": "function",
         "function": {
             "name": "get_financial_data",
-            "description": "Fetches current stock prices and market caps rapidly.",
+            "description": "Fetches current stock prices and market caps with automated currency conversion and USD normalization.",
             "parameters": {
                 "type": "object",
-                "properties": {"ticker": {"type": "string", "description": "Stock ticker (e.g. AAPL, MSFT, TSLA)."}},
+                "properties": {"ticker": {"type": "string", "description": "Stock ticker (e.g. AAPL, LICI.NS, BLK, SBIN.NS)."}},
                 "required": ["ticker"]
             }
         }
@@ -510,7 +556,6 @@ with st.expander("📎 Multimodal Data Room (PDF / Images)", expanded=False):
             st.session_state.last_image_name = uploaded_img.name
             img_bytes = uploaded_img.getvalue()
 
-            # Priority 1: High-Precision Gemini Vision Eye (if key provided)
             if st.session_state.gemini_key:
                 with st.spinner("🧠 Vision Engine inspecting image..."):
                     try:
@@ -524,7 +569,6 @@ with st.expander("📎 Multimodal Data Room (PDF / Images)", expanded=False):
                         st.success(f"Image `{uploaded_img.name}` parsed successfully into memory.")
                     except Exception as err:
                         st.error(f"Gemini Vision parsing error: {err}")
-            # Priority 2: Fallback to Groq if user has custom vision access enabled
             elif client:
                 with st.spinner("🧠 Checking Groq vision access..."):
                     b64_img = base64.b64encode(img_bytes).decode('utf-8')
@@ -594,10 +638,17 @@ if user_input:
             st.error("Please supply a valid Groq API Key.")
     else:
         system_prompt = (
-            "You are ORYN Analyst, an autonomous quantitative and market intelligence analyst built by Mriganka.\n"
-            "BEHAVIOR RULES:\n"
-            "- For general knowledge, direct questions, or simple chat, answer DIRECTLY and concisely without forcing financial sections.\n"
-            "- When asked for financial research, comparisons, or modeling, call the relevant tools and deliver a complete executive briefing.\n"
+            "You are ORYN Analyst, an autonomous quantitative, banking, and market intelligence analyst built by Mriganka.\n"
+            "BEHAVIOR & CURRENCY INTEGRITY RULES:\n"
+            "1. CURRENCY INTEGRITY IS PARAMOUNT:\n"
+            "   - When comparing companies listed in different native currencies (e.g. India INR vs US USD), ALWAYS look at 'Normalized Market Cap (USD)' for comparison.\n"
+            "   - NEVER compare raw numeric figures across currencies without conversion. NEVER label an Indian Rupee amount as USD ($).\n"
+            "   - For Indian domestic companies (.NS / .BO), state native metrics in Indian Rupees ('₹', Lakhs, Crores) alongside the normalized USD figures.\n"
+            "2. REGULATORY & BANKING QUERIES:\n"
+            "   - For Indian banking (SBI, RBI, TDS, Section 194A, Form 15G/15H, deceased depositors), ALWAYS use ₹ (INR), never $ (USD).\n"
+            "3. DELIVERABLE STRUCTURE:\n"
+            "   - For simple direct queries, answer directly without forcing financial templates.\n"
+            "   - For corporate research and comparisons, call `get_financial_data` for each ticker, invoke `python_interpreter` to plot charts and create `df` for Excel export, and output a clean executive briefing with accurate takeaways."
         )
 
         if st.session_state.last_image_name and not st.session_state.image_insights:
@@ -675,7 +726,7 @@ if user_input:
                         elif fn_name == "get_financial_data":
                             tk = fn_args.get("ticker", "")
                             tool_result = tool_get_financial_data(tk)
-                            status_container.write(f"📈 *Retrieved data for {tk}.*")
+                            status_container.write(f"📈 *Retrieved normalized data for {tk}.*")
                             st.session_state.telemetry["breakdown"]["finance"] += 1
 
                         elif fn_name == "search_document":
@@ -702,11 +753,12 @@ if user_input:
                     final_text = response_message.content or ""
                     break
 
+            # Guaranteed Synthesis: Only trigger if tools ran in THIS turn and no output text was delivered
             if step_tool_count > 0 and (not final_text or len(final_text.strip()) == 0):
                 status_container.write("📝 *Synthesizing briefing...*")
                 agent_messages.append({
                     "role": "user",
-                    "content": "Synthesize a structured executive briefing based on the tool outputs above. Do not call any tools."
+                    "content": "Synthesize a structured executive briefing based on the tool outputs above. Compare accurately using normalized USD figures and appropriate local currencies. Do not call any tools."
                 })
                 try:
                     synth_resp = client.chat.completions.create(
@@ -718,6 +770,7 @@ if user_input:
                 except Exception as e:
                     final_text = f"Synthesis note: {e}"
 
+            # Fallback code interceptor
             if not generated_plot and ("```python" in final_text or "plt." in final_text):
                 status_container.write("⚡ *Executing inline plot script...*")
                 code_matches = re.findall(r"```(?:python)?\s*(.*?)\s*```", final_text, re.DOTALL)
@@ -729,11 +782,13 @@ if user_input:
             elapsed = time.perf_counter() - start_time
             status_container.update(label=f"✅ Complete ({elapsed:.2f}s)", state="complete", expanded=False)
 
+            # Update Telemetry
             st.session_state.telemetry["queries"] += 1
             st.session_state.telemetry["tool_calls"] += step_tool_count
             st.session_state.telemetry["last_latency_s"] = elapsed
             st.session_state.telemetry["tokens_est"] += len(user_input.split()) * 2 + len(final_text.split()) * 2
 
+            # Render Responses
             st.markdown(final_text)
             if generated_plot:
                 st.image(generated_plot, caption="Generated Visual Artifact", use_container_width=True)
