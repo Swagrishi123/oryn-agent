@@ -22,7 +22,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# --- Modern Purple UI Styling ---
+# --- Responsive Purple Theme Styling ---
 st.markdown("""
 <style>
     .stApp {
@@ -203,6 +203,7 @@ with st.sidebar:
 
     client = Groq(api_key=st.session_state.api_key) if st.session_state.api_key else None
 
+    # Discover live active models dynamically
     discovered_models = []
     if client:
         try:
@@ -243,7 +244,7 @@ with st.sidebar:
     b = st.session_state.telemetry["breakdown"]
     st.text(f"Python: {b['python']} | Market: {b['finance']} | Docs: {b['doc_search']} | Web: {b['web']}")
 
-# --- Helpers ---
+# --- Helpers: Code Sanitizer, Leaked-Script Remover, & HTML Builder ---
 def clean_code_snippet(code: str) -> str:
     cleaned_lines = []
     for line in code.strip().splitlines():
@@ -252,6 +253,14 @@ def clean_code_snippet(code: str) -> str:
             continue
         cleaned_lines.append(line)
     return "\n".join(cleaned_lines).strip()
+
+def strip_leaked_code(text: str) -> str:
+    """Strips accidental raw Python code that the LLM dumped into the text response."""
+    raw_script_pattern = r"(?:import\s+(?:matplotlib|pandas|numpy|plt|yf)[\s\S]*?(?:plt\.show\(\)|plt\.tight_layout\(\)|plt\.close\(\)))"
+    text = re.sub(raw_script_pattern, "\n*(Visual chart artifact rendered below)*\n", text)
+    code_block_pattern = r"```(?:python)?\s*(?:import\s+(?:matplotlib|plt)|plt\.)[\s\S]*?```"
+    text = re.sub(code_block_pattern, "\n*(Visual chart artifact rendered below)*\n", text)
+    return text.strip()
 
 def markdown_to_clean_html(text: str) -> str:
     text = re.sub(r"^### (.*?)$", r"<h3>\1</h3>", text, flags=re.MULTILINE)
@@ -295,7 +304,8 @@ def build_html_report(text: str, plot_bytes: bytes | None) -> str:
             <img src="data:image/png;base64,{b64}" style="max-width:100%; border-radius:8px; box-shadow:0 4px 12px rgba(0,0,0,0.06);"/>
         </div>
         """
-    body_html = markdown_to_clean_html(text)
+    clean_text = strip_leaked_code(text)
+    body_html = markdown_to_clean_html(clean_text)
     return f"""<!DOCTYPE html>
 <html>
 <head>
@@ -324,7 +334,7 @@ def build_html_report(text: str, plot_bytes: bytes | None) -> str:
 </body>
 </html>"""
 
-# --- Python Sandbox ---
+# --- Python Sandbox with OpenPyxl Excel Styler ---
 def tool_python_interpreter(code: str) -> tuple[str, bytes | None, bytes | None]:
     code = clean_code_snippet(code)
     if hitl_enabled:
@@ -349,6 +359,7 @@ def tool_python_interpreter(code: str) -> tuple[str, bytes | None, bytes | None]
         sys.stdout = stdout_trap
         exec("import math\nimport sympy\nimport numpy as np\nimport pandas as pd\nimport matplotlib.pyplot as plt\n" + code, scope)
         
+        # Check for figure
         if plt.get_fignums():
             fig_buf = io.BytesIO()
             plt.gcf().savefig(fig_buf, format="png", bbox_inches="tight", dpi=140)
@@ -356,11 +367,19 @@ def tool_python_interpreter(code: str) -> tuple[str, bytes | None, bytes | None]
             plot_bytes = fig_buf.getvalue()
             plt.close('all')
 
+        # Check for DataFrame to export Excel model
         for var_name, var_val in scope.items():
             if isinstance(var_val, pd.DataFrame) and not var_name.startswith("_"):
                 x_buf = io.BytesIO()
                 with pd.ExcelWriter(x_buf, engine='openpyxl') as writer:
                     var_val.to_excel(writer, index=True, sheet_name="Data_Model")
+                    workbook = writer.book
+                    worksheet = writer.sheets["Data_Model"]
+                    # Apply professional column width auto-fit
+                    for col in worksheet.columns:
+                        max_len = max(len(str(cell.value or '')) for cell in col)
+                        col_letter = col[0].column_letter
+                        worksheet.column_dimensions[col_letter].width = max(max_len + 3, 12)
                 x_buf.seek(0)
                 excel_bytes = x_buf.getvalue()
                 break
@@ -384,7 +403,6 @@ def fetch_usd_conversion_rate(currency: str) -> float:
             return float(fx)
     except Exception:
         pass
-    # Fallback exchange rates if live lookup is throttled
     fallbacks = {
         "INR": 1.0 / 84.5,
         "EUR": 1.08,
@@ -417,7 +435,6 @@ def tool_get_financial_data(ticker: str, data_type: str = "summary") -> str:
         mcap_usd = (mcap * usd_rate) if isinstance(mcap, (int, float)) and mcap > 0 else None
         price_usd = (price * usd_rate) if isinstance(price, (int, float)) and price > 0 else None
 
-        # Build clean Indian numbering annotations if INR
         if raw_currency == "INR" and isinstance(mcap, (int, float)):
             cr_val = mcap / 1e7
             lakh_cr = mcap / 1e12
@@ -639,16 +656,20 @@ if user_input:
     else:
         system_prompt = (
             "You are ORYN Analyst, an autonomous quantitative, banking, and market intelligence analyst built by Mriganka.\n"
-            "BEHAVIOR & CURRENCY INTEGRITY RULES:\n"
+            "BEHAVIOR & EXECUTION RULES:\n"
             "1. CURRENCY INTEGRITY IS PARAMOUNT:\n"
-            "   - When comparing companies listed in different native currencies (e.g. India INR vs US USD), ALWAYS look at 'Normalized Market Cap (USD)' for comparison.\n"
+            "   - When comparing companies listed in different native currencies (e.g. India INR vs US USD), ALWAYS look at 'Normalized Market Cap (USD)' for relative scale comparisons.\n"
             "   - NEVER compare raw numeric figures across currencies without conversion. NEVER label an Indian Rupee amount as USD ($).\n"
             "   - For Indian domestic companies (.NS / .BO), state native metrics in Indian Rupees ('₹', Lakhs, Crores) alongside the normalized USD figures.\n"
-            "2. REGULATORY & BANKING QUERIES:\n"
+            "2. CODE HYGIENE (CRITICAL):\n"
+            "   - NEVER print raw Python code, plotting scripts, or 'import matplotlib' in your written text briefing.\n"
+            "   - All calculations and plots must be executed SILENTLY by calling the `python_interpreter` tool.\n"
+            "   - In your written text, provide only clean tables, financial metrics, and executive takeaways.\n"
+            "3. REGULATORY & BANKING QUERIES:\n"
             "   - For Indian banking (SBI, RBI, TDS, Section 194A, Form 15G/15H, deceased depositors), ALWAYS use ₹ (INR), never $ (USD).\n"
-            "3. DELIVERABLE STRUCTURE:\n"
+            "4. DELIVERABLE STRUCTURE:\n"
             "   - For simple direct queries, answer directly without forcing financial templates.\n"
-            "   - For corporate research and comparisons, call `get_financial_data` for each ticker, invoke `python_interpreter` to plot charts and create `df` for Excel export, and output a clean executive briefing with accurate takeaways."
+            "   - For corporate research, call `get_financial_data` for each ticker, invoke `python_interpreter` to plot charts and create `df`, and write a clean executive briefing."
         )
 
         if st.session_state.last_image_name and not st.session_state.image_insights:
@@ -758,7 +779,11 @@ if user_input:
                 status_container.write("📝 *Synthesizing briefing...*")
                 agent_messages.append({
                     "role": "user",
-                    "content": "Synthesize a structured executive briefing based on the tool outputs above. Compare accurately using normalized USD figures and appropriate local currencies. Do not call any tools."
+                    "content": (
+                        "Synthesize a structured executive briefing based on the tool outputs above. "
+                        "Do NOT include any Python code, scripts, or import statements in your text response. "
+                        "Present only clean tables, financial metrics, and executive takeaways."
+                    )
                 })
                 try:
                     synth_resp = client.chat.completions.create(
@@ -778,6 +803,9 @@ if user_input:
                 out, p_bytes, x_bytes = tool_python_interpreter(target_code)
                 if p_bytes: generated_plot = p_bytes
                 if x_bytes: generated_excel = x_bytes
+
+            # Sanitize any accidental code leakage before display
+            final_text = strip_leaked_code(final_text)
 
             elapsed = time.perf_counter() - start_time
             status_container.update(label=f"✅ Complete ({elapsed:.2f}s)", state="complete", expanded=False)
