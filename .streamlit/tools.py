@@ -3,6 +3,7 @@ import re
 import requests
 import yfinance as yf
 
+# Tool schemas registered for Groq reference
 AGENT_TOOLS = [
     {
         "type": "function",
@@ -23,7 +24,6 @@ AGENT_TOOLS = [
     }
 ]
 
-# Verified institutional baseline metrics (guarantees the model never freezes)
 INSTITUTIONAL_BENCHMARKS = {
     "RELIANCE": {
         "company_name": "Reliance Industries Limited",
@@ -63,14 +63,22 @@ INSTITUTIONAL_BENCHMARKS = {
     }
 }
 
+COMMON_ENGLISH_STOPWORDS = {
+    "CAN", "YOU", "PULL", "UP", "LIVE", "MARKET", "DATA", "FOR", "AND", "SHOW",
+    "THEIR", "IN", "CLEAN", "TABLE", "WHAT", "WHO", "IS", "THE", "GIVE", "GET",
+    "ME", "OF", "WITH", "THIS", "THAT", "FROM", "OUT", "RUN", "HOW", "ABOUT",
+    "NOW", "ESTIMATE", "PRICE", "CAP", "RANGE", "RATIO", "STOCK", "SHARE",
+    "USD", "INR", "NSE", "BSE", "PE", "EV", "DIP", "EBITDA", "FCF", "APR",
+    "LBO", "DCF", "WACC", "TCE", "NIM", "RBI", "SEBI", "FED", "CEO", "CFO"
+}
+
 def fetch_yahoo_v8_chart(symbol: str) -> dict | None:
-    """Fetches real-time price and 52w range via Yahoo v8 chart API (unblocked on cloud)."""
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
     }
     url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1d&range=1d"
     try:
-        res = requests.get(url, headers=headers, timeout=4)
+        res = requests.get(url, headers=headers, timeout=2.5)
         if res.status_code == 200:
             data = res.json()
             meta = data.get("chart", {}).get("result", [{}])[0].get("meta", {})
@@ -92,14 +100,13 @@ def fetch_yahoo_v8_chart(symbol: str) -> dict | None:
     return None
 
 def fetch_google_finance_metrics(symbol: str) -> dict | None:
-    """Scrapes Google Finance for Indian equities."""
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
     }
     for exch in ["NSE", "BOM"]:
         url = f"https://www.google.com/finance/quote/{symbol}:{exch}"
         try:
-            res = requests.get(url, headers=headers, timeout=4)
+            res = requests.get(url, headers=headers, timeout=2.0)
             if res.status_code == 200:
                 html = res.text
                 price_match = re.search(r'class="YMlKec fxKbKc">₹?([0-9,.]+)<', html)
@@ -116,7 +123,6 @@ def fetch_google_finance_metrics(symbol: str) -> dict | None:
     return None
 
 def tool_get_financial_data(ticker: str) -> dict:
-    """Universal market data resolver prioritizing verified live exchange data."""
     clean_sym = ticker.strip().upper().replace("$", "")
     candidates = []
     if not clean_sym.endswith((".NS", ".BO")):
@@ -124,11 +130,9 @@ def tool_get_financial_data(ticker: str) -> dict:
         candidates.append(f"{clean_sym}.BO")
     candidates.append(clean_sym)
 
-    # 1. Attempt Yahoo v8 Chart
     for sym in candidates:
         y_data = fetch_yahoo_v8_chart(sym)
         if y_data:
-            # Pair with Google Finance or benchmark for Market Cap
             gf_data = fetch_google_finance_metrics(clean_sym)
             mcap = gf_data.get("market_cap") if gf_data else None
             if not mcap and clean_sym in INSTITUTIONAL_BENCHMARKS:
@@ -144,7 +148,6 @@ def tool_get_financial_data(ticker: str) -> dict:
                 "currency": y_data["currency"]
             }
 
-    # 2. Attempt Google Finance
     gf = fetch_google_finance_metrics(clean_sym)
     if gf:
         return {
@@ -157,7 +160,6 @@ def tool_get_financial_data(ticker: str) -> dict:
             "currency": "INR"
         }
 
-    # 3. Institutional Benchmark Fallback
     if clean_sym in INSTITUTIONAL_BENCHMARKS:
         return INSTITUTIONAL_BENCHMARKS[clean_sym]
 
@@ -172,9 +174,8 @@ def tool_get_financial_data(ticker: str) -> dict:
     }
 
 def fetch_institutional_officeholder_facts(query: str) -> str | None:
-    """Fetches real-time institutional leadership facts from Wikipedia's open REST API."""
     q_lower = query.lower()
-    headers = {"User-Agent": "ORYNAnalyst/2.0 (Institutional BFSI Research Agent)"}
+    headers = {"User-Agent": "ORYNAnalyst/2.0 (BFSI Research)"}
     
     target_page = None
     if "rbi" in q_lower or "reserve bank of india" in q_lower or "governor" in q_lower:
@@ -189,16 +190,14 @@ def fetch_institutional_officeholder_facts(query: str) -> str | None:
     if target_page:
         try:
             url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{target_page}"
-            res = requests.get(url, headers=headers, timeout=4)
+            res = requests.get(url, headers=headers, timeout=2.5)
             if res.status_code == 200:
-                data = res.json()
-                extract = data.get("extract", "")
+                extract = res.json().get("extract", "")
                 if extract:
                     return f"[VERIFIED INSTITUTIONAL RECORD: {extract}]"
         except Exception:
             pass
 
-    # Direct fallback for RBI Governor
     if "rbi" in q_lower and "governor" in q_lower:
         return (
             "[VERIFIED INSTITUTIONAL RECORD: Sanjay Malhotra is the 26th Governor of the "
