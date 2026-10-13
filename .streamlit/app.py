@@ -11,7 +11,7 @@ if "agent" in sys.modules:
     importlib.reload(sys.modules["agent"])
 import agent
 importlib.reload(agent)
-from agent import run_analyst_agent
+from agent import run_analyst_agent, sanitize_report_formatting
 
 # --- Page Configuration ---
 st.set_page_config(
@@ -74,9 +74,8 @@ with st.sidebar:
     )
     hitl_enabled = st.toggle("🛡️ HITL Safety Guardrails", value=True)
 
-# --- Helper Functions ---
-def clean_markdown_content(text: str) -> str:
-    """Cleans code blocks and preserves Markdown table integrity."""
+# --- Canonical UI Cleaner ---
+def clean_for_ui(text: str) -> str:
     raw_script_pattern = r"(?:import\s+(?:matplotlib|pandas|numpy|plt|yf)[\s\S]*?(?:plt\.show\(\)|plt\.tight_layout\(\)|plt\.close\(\)))"
     text = re.sub(raw_script_pattern, "\n*(Visual chart artifact rendered below)*\n", text)
     code_block_pattern = r"```(?:python)?\s*(?:import\s+(?:matplotlib|plt)|plt\.)[\s\S]*?```"
@@ -85,34 +84,7 @@ def clean_markdown_content(text: str) -> str:
     text = re.sub(r"\[Image:\s*[^\]]+\]", "", text)
     text = re.sub(r"\*\s+\*", "", text)
     text = text.replace(r"\approx", "≈").replace(r"\times", "×")
-
-    # Split horizontally merged table rows
-    text = re.sub(r'\|\s*\|', '|\n|', text)
-
-    lines = text.split('\n')
-    formatted = []
-    in_table = False
-
-    for line in lines:
-        stripped = line.strip()
-        if stripped.startswith('|'):
-            if not stripped.endswith('|'):
-                stripped = stripped + " |"
-            if not in_table:
-                if formatted and formatted[-1] != "":
-                    formatted.append("")
-                in_table = True
-            formatted.append(stripped)
-        else:
-            if in_table:
-                if formatted and formatted[-1] != "":
-                    formatted.append("")
-                in_table = False
-            formatted.append(line)
-
-    cleaned = '\n'.join(formatted)
-    cleaned = re.sub(r'(?<!\\)\$', r'\$', cleaned)
-    return re.sub(r'\n{3,}', '\n\n', cleaned).strip()
+    return sanitize_report_formatting(text)
 
 def build_html_report(text: str, plot_bytes: bytes | None) -> str:
     current_date = datetime.datetime.now().strftime("%B %d, %Y • %H:%M UTC")
@@ -125,7 +97,7 @@ def build_html_report(text: str, plot_bytes: bytes | None) -> str:
             <img src="data:image/png;base64,{b64}" style="max-width:100%; border-radius:8px;"/>
         </div>
         """
-    clean_text = clean_markdown_content(text)
+    clean_text = clean_for_ui(text)
     paragraphs = "".join([f"<p>{p.strip()}</p>" for p in clean_text.split("\n\n") if p.strip()])
     return f"""<!DOCTYPE html>
 <html>
@@ -193,7 +165,7 @@ def render_download_suite(text: str, plot_bytes: bytes | None, excel_bytes: byte
 # --- Render Chat History ---
 for idx, msg in enumerate(st.session_state.messages):
     with st.chat_message(msg.get("role", "assistant")):
-        st.markdown(clean_markdown_content(msg.get("content", "")))
+        st.markdown(clean_for_ui(msg.get("content", "")))
         if msg.get("image"):
             st.image(msg["image"], caption="Generated Visual Artifact", use_container_width=True)
         if msg.get("role") == "assistant":
@@ -235,7 +207,7 @@ if user_input:
 
             status_container.update(label=f"✅ Complete ({elapsed:.2f}s)", state="complete", expanded=False)
 
-            clean_display_text = clean_markdown_content(final_text)
+            clean_display_text = clean_for_ui(final_text)
             st.markdown(clean_display_text)
 
             if generated_plot:
