@@ -6,7 +6,7 @@ import datetime
 import importlib
 import sys
 
-# Force Streamlit Cloud to reload agent.py from disk instead of RAM
+# Force Streamlit to load the newest agent from disk
 if "agent" in sys.modules:
     importlib.reload(sys.modules["agent"])
 import agent
@@ -36,7 +36,7 @@ if "messages" not in st.session_state:
 if "api_key" not in st.session_state:
     st.session_state.api_key = default_api_key
 
-# --- Clean Native Header ---
+# --- Header ---
 col_title, col_reset = st.columns([5, 1])
 with col_title:
     st.markdown("<h1 style='color: #4a148c; margin-bottom: 0;'>✦ ORYN ANALYST</h1>", unsafe_allow_html=True)
@@ -63,14 +63,15 @@ with st.sidebar:
 
     active_model = st.selectbox(
         "Reasoning Engine:",
-        options=["qwen/qwen3.8-27b", "llama-3.1-8b-instant"],
+        options=["llama-3.1-8b-instant", "qwen/qwen3.8-27b"],
         index=0,
-        help="Institutional quantitative reasoning engines"
+        help="Institutional reasoning engines"
     )
     hitl_enabled = st.toggle("🛡️ HITL Safety Guardrails", value=True)
 
 # --- Helper Functions ---
 def strip_leaked_code(text: str) -> str:
+    """Strips leaked code blocks and repairs collapsed Markdown table rows."""
     raw_script_pattern = r"(?:import\s+(?:matplotlib|pandas|numpy|plt|yf)[\s\S]*?(?:plt\.show\(\)|plt\.tight_layout\(\)|plt\.close\(\)))"
     text = re.sub(raw_script_pattern, "\n*(Visual chart artifact rendered below)*\n", text)
     code_block_pattern = r"```(?:python)?\s*(?:import\s+(?:matplotlib|plt)|plt\.)[\s\S]*?```"
@@ -79,6 +80,12 @@ def strip_leaked_code(text: str) -> str:
     text = re.sub(r"\[Image:\s*[^\]]+\]", "", text)
     text = re.sub(r"\*\s+\*", "", text)
     text = text.replace(r"\approx", "≈").replace(r"\times", "×")
+
+    # REPAIR COLLAPSED TABLES: turn side-by-side '| |' into separate lines
+    text = re.sub(r'\|\s*\|', '|\n|', text)
+    text = re.sub(r'([^\n])\n(\|.*\|)', r'\1\n\n\2', text)
+    text = re.sub(r'(\|.*\|)\n([^\n|])', r'\1\n\n\2', text)
+    text = re.sub(r'(?<!\\)\$', r'\$', text)
     return text.strip()
 
 def build_html_report(text: str, plot_bytes: bytes | None) -> str:
@@ -116,27 +123,21 @@ def build_html_report(text: str, plot_bytes: bytes | None) -> str:
 </html>"""
 
 def render_download_suite(text: str, plot_bytes: bytes | None, excel_bytes: bytes | None, key_prefix: str):
-    """Dynamically creates responsive download buttons for all available artifacts."""
-    buttons = []
-    
-    # 1. Plain text institutional memo (always available)
-    buttons.append({
-        "label": "📥 Download Memo (.txt)",
-        "data": text,
-        "file_name": f"ORYN_Institutional_Memo_{key_prefix}.txt",
-        "mime": "text/plain"
-    })
-    
-    # 2. Formatted HTML Executive Brief (always available)
-    html_doc = build_html_report(text, plot_bytes)
-    buttons.append({
-        "label": "📑 Download Report (.html)",
-        "data": html_doc,
-        "file_name": f"ORYN_Report_{key_prefix}.html",
-        "mime": "text/html"
-    })
-    
-    # 3. Chart artifact (if generated)
+    """Generates download options for every response."""
+    buttons = [
+        {
+            "label": "📥 Download Memo (.txt)",
+            "data": text,
+            "file_name": f"ORYN_Institutional_Memo_{key_prefix}.txt",
+            "mime": "text/plain"
+        },
+        {
+            "label": "📑 Download Report (.html)",
+            "data": build_html_report(text, plot_bytes),
+            "file_name": f"ORYN_Report_{key_prefix}.html",
+            "mime": "text/html"
+        }
+    ]
     if plot_bytes:
         buttons.append({
             "label": "📊 Download Chart (.png)",
@@ -144,8 +145,6 @@ def render_download_suite(text: str, plot_bytes: bytes | None, excel_bytes: byte
             "file_name": f"ORYN_Chart_{key_prefix}.png",
             "mime": "image/png"
         })
-        
-    # 4. Financial Model Workbook (if generated)
     if excel_bytes:
         buttons.append({
             "label": "📗 Financial Model (.xlsx)",
@@ -169,10 +168,9 @@ def render_download_suite(text: str, plot_bytes: bytes | None, excel_bytes: byte
 # --- Render Chat History ---
 for idx, msg in enumerate(st.session_state.messages):
     with st.chat_message(msg.get("role", "assistant")):
-        st.markdown(msg.get("content", ""))
+        st.markdown(strip_leaked_code(msg.get("content", "")))
         if msg.get("image"):
             st.image(msg["image"], caption="Generated Visual Artifact", use_container_width=True)
-            
         if msg.get("role") == "assistant":
             render_download_suite(
                 text=msg.get("content", ""),
@@ -210,16 +208,17 @@ if user_input:
                 status_callback=status_callback
             )
 
-            final_text = strip_leaked_code(final_text)
             status_container.update(label=f"✅ Complete ({elapsed:.2f}s)", state="complete", expanded=False)
 
-            st.markdown(final_text)
+            clean_display_text = strip_leaked_code(final_text)
+            st.markdown(clean_display_text)
+
             if generated_plot:
                 st.image(generated_plot, caption="Generated Visual Artifact", use_container_width=True)
 
             msg_idx = len(st.session_state.messages)
             render_download_suite(
-                text=final_text,
+                text=clean_display_text,
                 plot_bytes=generated_plot,
                 excel_bytes=generated_excel,
                 key_prefix=f"live_{msg_idx}"
@@ -227,7 +226,7 @@ if user_input:
 
             st.session_state.messages.append({
                 "role": "assistant",
-                "content": final_text,
+                "content": clean_display_text,
                 "image": generated_plot,
                 "excel": generated_excel
             })
