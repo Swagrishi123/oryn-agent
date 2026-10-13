@@ -12,10 +12,9 @@ from sandbox import tool_python_interpreter
 
 SYSTEM_PROMPT = (
     "You are ORYN Analyst, an elite institutional BFSI quantitative analyst and investment banking advisor.\n\n"
-    "CRITICAL LIVE DATA PROTOCOL:\n"
-    "- When asked about any public company, current share price, P/E ratio, market cap, or valuation: "
-    "YOU MUST INVOKE the `get_financial_data` tool to pull real verified figures from NSE/BSE or global exchanges.\n"
-    "- NEVER guess or invent approximate figures.\n\n"
+    "CRITICAL MARKET DATA RULE:\n"
+    "- When [VERIFIED LIVE EXCHANGE DATA] is provided in the context, you MUST use those exact prices, market caps, and metrics.\n"
+    "- Never invent or hallucinate approximate figures when live data is provided.\n\n"
     "CRITICAL FORMATTING & STRUCTURAL RULES:\n"
     "1. DIRECT STRUCTURAL DELIVERY: Eliminate introductory greetings, pleasantries, and meta-commentary. "
     "Begin immediately with the report title.\n"
@@ -43,8 +42,72 @@ SYSTEM_PROMPT = (
 
 CACHED_WORKING_MODEL = None
 
+# Known entity dictionary for Indian & Global market resolution
+KNOWN_ENTITIES = {
+    "reliance": "RELIANCE",
+    "tcs": "TCS",
+    "tata consultancy": "TCS",
+    "infosys": "INFY",
+    "infy": "INFY",
+    "hdfc": "HDFCBANK",
+    "hdfc bank": "HDFCBANK",
+    "icici": "ICICIBANK",
+    "icici bank": "ICICIBANK",
+    "sbi": "SBIN",
+    "state bank of india": "SBIN",
+    "tata motors": "TATAMOTORS",
+    "itc": "ITC",
+    "wipro": "WIPRO",
+    "bharti airtel": "BHARTIARTL",
+    "airtel": "BHARTIARTL",
+    "apple": "AAPL",
+    "microsoft": "MSFT",
+    "nvidia": "NVDA",
+    "google": "GOOGL",
+    "tesla": "TSLA",
+    "amazon": "AMZN"
+}
+
+def extract_and_fetch_live_data(prompt: str, status_callback=None) -> str:
+    """Pre-detects company names or ticker symbols and retrieves live exchange metrics."""
+    found_tickers = set()
+    p_lower = prompt.lower()
+
+    # 1. Match company names from dictionary
+    for name, sym in KNOWN_ENTITIES.items():
+        if re.search(r'\b' + re.escape(name) + r'\b', p_lower):
+            found_tickers.add(sym)
+
+    # 2. Match raw uppercase ticker patterns (e.g., RELIANCE, TCS, INFY)
+    raw_candidates = re.findall(r'\b[A-Z]{2,10}\b', prompt)
+    ignored = {"USD", "INR", "NSE", "BSE", "PE", "EV", "DIP", "EBITDA", "FCF", "APR", "LBO", "DCF", "WACC", "TCE", "NIM"}
+    for c in raw_candidates:
+        if c not in ignored:
+            found_tickers.add(c)
+
+    if not found_tickers:
+        return ""
+
+    results = []
+    for ticker in found_tickers:
+        if status_callback:
+            status_callback("info", f"Retrieving live NSE/BSE metrics for {ticker}...")
+        try:
+            data = tool_get_financial_data(ticker)
+            if "error" not in data:
+                results.append(
+                    f"- Company: {data.get('company_name', ticker)} ({data.get('ticker_resolved')}) | "
+                    f"Current Price: {data.get('current_price')} | Market Cap: {data.get('market_cap')} | "
+                    f"P/E Ratio: {data.get('pe_ratio')} | 52W High: {data.get('52w_high')} | 52W Low: {data.get('52w_low')}"
+                )
+        except Exception:
+            continue
+
+    if results:
+        return "\n\n[VERIFIED LIVE EXCHANGE DATA - USE THESE EXACT VALUES IN YOUR ANALYSIS]:\n" + "\n".join(results) + "\n"
+    return ""
+
 def is_quantitative_model_request(prompt: str) -> bool:
-    """Distinguishes explicit DCF model building from qualitative advisory queries."""
     p = prompt.lower()
     dcf_terms = [
         "dcf", "discounted cash flow", "sensitivity matrix", 
@@ -59,7 +122,6 @@ def is_quantitative_model_request(prompt: str) -> bool:
     return bool(has_discount_metric and has_financial_metric)
 
 def sanitize_report_formatting(text: str) -> str:
-    """Repairs collapsed markdown tables, separates inline rows, and removes formatting artifacts."""
     cleaned = re.sub(r'```(?:python)?\s*[\s\S]*?```', '', text)
     cleaned = re.sub(r'\|\s*\|', '|\n|', cleaned)
     cleaned = re.sub(r'([^\n])\n(\|.*\|)', r'\1\n\n\2', cleaned)
@@ -90,7 +152,6 @@ def resolve_api_key(api_key: str = "") -> str:
     return os.environ.get("GROQ_API_KEY", "").strip()
 
 def get_best_available_model(client: Groq, exclude_model: str = None, force_refresh: bool = False) -> str:
-    """Discovers accessible Groq text models dynamically."""
     global CACHED_WORKING_MODEL
     if CACHED_WORKING_MODEL and not force_refresh and CACHED_WORKING_MODEL != exclude_model:
         return CACHED_WORKING_MODEL
@@ -138,7 +199,6 @@ def get_best_available_model(client: Groq, exclude_model: str = None, force_refr
     return "llama-3.3-70b-versatile"
 
 def create_completion_with_fallback(client: Groq, preferred_model: str = None, status_callback=None, **kwargs):
-    """Executes completions with auto-failover on 404s and rate-limit backoff."""
     global CACHED_WORKING_MODEL
     active_model = preferred_model or get_best_available_model(client)
     
@@ -151,6 +211,13 @@ def create_completion_with_fallback(client: Groq, preferred_model: str = None, s
     except Exception as e:
         err_str = str(e).lower()
         
+        # Scenario 1: Model does not support tool calling -> strip tools parameter and retry
+        if "tool calling is not supported" in err_str or "tool_use_failed" in err_str:
+            kwargs.pop("tools", None)
+            kwargs.pop("tool_choice", None)
+            return client.chat.completions.create(**kwargs)
+
+        # Scenario 2: Model 404 or decommissioned -> auto-switch
         if any(term in err_str for term in ["404", "model_not_found", "decommissioned", "does not exist", "not have access"]):
             if status_callback:
                 status_callback("warning", f"Model `{active_model}` unavailable. Auto-switching to accessible engine...")
@@ -158,6 +225,7 @@ def create_completion_with_fallback(client: Groq, preferred_model: str = None, s
             kwargs["model"] = alt_model
             return client.chat.completions.create(**kwargs)
 
+        # Scenario 3: Rate limit pause
         if "429" in err_str or "rate_limit_exceeded" in err_str or "tokens per minute" in err_str:
             delay_match = re.search(r'try again in ([0-9.]+)s', err_str)
             sleep_sec = float(delay_match.group(1)) + 0.5 if delay_match else 2.5
@@ -256,75 +324,29 @@ def run_analyst_agent(
     except Exception as e:
         return f"⚠️ **Client Error**: {e}", None, None, 0.0
 
-    # 1. Branch: Deterministic DCF Modeling
+    # 1. DCF Quantitative Modeling Branch
     if is_quantitative_model_request(user_input):
         if status_callback:
             status_callback("info", "Executing quantitative DCF model and Excel builder...")
         briefing_text, plot_bytes, excel_bytes = generate_deterministic_dcf_artifacts(user_input)
         return sanitize_report_formatting(briefing_text), plot_bytes, excel_bytes, time.perf_counter() - start_time
 
-    # 2. Branch: Institutional Advisory & Live Market Data Tool Loop
+    # 2. Pre-fetch Live Exchange Data directly into Context
+    live_market_data = extract_and_fetch_live_data(user_input, status_callback=status_callback)
+    augmented_prompt = user_input + live_market_data
+
+    # 3. Direct Completion Execution (Works universally on all Groq models)
     try:
-        messages = build_contextual_messages(user_input, SYSTEM_PROMPT, max_turns=3)
+        messages = build_contextual_messages(augmented_prompt, SYSTEM_PROMPT, max_turns=3)
         
-        first_resp = create_completion_with_fallback(
+        resp = create_completion_with_fallback(
             client=client,
             preferred_model=selected_model,
             status_callback=status_callback,
             messages=messages,
-            tools=AGENT_TOOLS,
-            tool_choice="auto",
             max_tokens=1200
         )
-        msg = first_resp.choices[0].message
-
-        # Handle tool invocation if live market data is requested
-        if getattr(msg, "tool_calls", None):
-            cleaned_tool_calls = []
-            for tc in msg.tool_calls:
-                cleaned_tool_calls.append({
-                    "id": tc.id,
-                    "type": "function",
-                    "function": {
-                        "name": tc.function.name,
-                        "arguments": tc.function.arguments
-                    }
-                })
-
-            assistant_msg_dict = {
-                "role": "assistant",
-                "content": msg.content or "",
-                "tool_calls": cleaned_tool_calls
-            }
-            messages.append(assistant_msg_dict)
-
-            for tool_call in msg.tool_calls:
-                fn_name = tool_call.function.name
-                args = json.loads(tool_call.function.arguments or "{}")
-                
-                if fn_name == "get_financial_data":
-                    ticker = args.get("ticker", "")
-                    if status_callback:
-                        status_callback("info", f"Retrieving live market metrics for {ticker} from NSE/BSE...")
-                    live_result = tool_get_financial_data(ticker)
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "name": fn_name,
-                        "content": json.dumps(live_result)
-                    })
-
-            second_resp = create_completion_with_fallback(
-                client=client,
-                preferred_model=selected_model,
-                status_callback=status_callback,
-                messages=messages,
-                max_tokens=1200
-            )
-            final_text = second_resp.choices[0].message.content or ""
-        else:
-            final_text = msg.content or ""
-
+        final_text = resp.choices[0].message.content or ""
         elapsed = time.perf_counter() - start_time
         return sanitize_report_formatting(final_text), None, None, elapsed
 
