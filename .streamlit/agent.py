@@ -16,7 +16,7 @@ SYSTEM_PROMPT = (
     "1. DIRECT STRUCTURAL DELIVERY: Eliminate introductory pleasantries, greetings (e.g., 'Hello', 'As the VP of M&A...'), "
     "and conversational transitions. Open directly with the memo title and structured content.\n"
     "2. HIGH DENSITY & CONCISENESS: Present financial comparisons and multi-scenario analyses primarily using compact "
-    "Markdown tables (| Metric | Value |) followed by bullet points. Keep prose tight and packed with data so full reports complete within 700 tokens without truncation.\n"
+    "Markdown tables (| Metric | Value |) followed by bullet points. Keep prose tight and packed with data so full reports complete within 450 tokens without truncation.\n"
     "3. INSTITUTIONAL M&A & BFSI REASONING:\n"
     "   - Stock Deals: Accretion is driven strictly by P/E arbitrage (Buyer P/E > Target Purchase P/E is accretive).\n"
     "   - Debt / Cash Deals: Buyer P/E is completely irrelevant. Accretion is driven strictly by comparing Target Earnings Yield (1 / Target Purchase P/E) "
@@ -94,10 +94,10 @@ def resolve_api_key(api_key: str = "") -> str:
         pass
     return os.environ.get("GROQ_API_KEY", "").strip()
 
-def get_best_available_model(client: Groq, force_refresh: bool = False) -> str:
+def get_best_available_model(client: Groq, exclude_model: str = None, force_refresh: bool = False) -> str:
     """Discovers an accessible active model dynamically via live ping tests."""
     global CACHED_WORKING_MODEL
-    if CACHED_WORKING_MODEL and not force_refresh:
+    if CACHED_WORKING_MODEL and not force_refresh and CACHED_WORKING_MODEL != exclude_model:
         return CACHED_WORKING_MODEL
 
     try:
@@ -112,7 +112,7 @@ def get_best_available_model(client: Groq, force_refresh: bool = False) -> str:
     ]
     candidates = [
         mid for mid in available_ids
-        if not any(b in mid.lower() for b in filter_out)
+        if not any(b in mid.lower() for b in filter_out) and mid != exclude_model
     ]
 
     preference = [
@@ -147,7 +147,7 @@ def get_best_available_model(client: Groq, force_refresh: bool = False) -> str:
     raise RuntimeError(f"Could not connect to any active Groq text model. Available IDs: [{avail_str}]")
 
 def create_completion_with_fallback(client: Groq, preferred_model: str = None, status_callback=None, **kwargs):
-    """Executes Groq completions with temperature control and automatic failover for 400/404/429 limits."""
+    """Executes completions with auto-throttling, delay resolution, and model failover."""
     global CACHED_WORKING_MODEL
     
     filter_out = ["guard", "safeguard", "orpheus", "whisper", "allam", "arabic"]
@@ -156,11 +156,11 @@ def create_completion_with_fallback(client: Groq, preferred_model: str = None, s
     else:
         active_model = get_best_available_model(client)
         
-    # Enforce safe upper ceiling on max_tokens to stay within Groq OTPM limits
+    # Budget 480 tokens to prevent cumulative 60-second limit breaches
     if "max_tokens" in kwargs:
-        kwargs["max_tokens"] = min(kwargs["max_tokens"], 750)
+        kwargs["max_tokens"] = min(kwargs["max_tokens"], 480)
     else:
-        kwargs["max_tokens"] = 750
+        kwargs["max_tokens"] = 480
 
     if "temperature" not in kwargs:
         kwargs["temperature"] = 0.1
@@ -172,24 +172,33 @@ def create_completion_with_fallback(client: Groq, preferred_model: str = None, s
     except Exception as e:
         err_str = str(e).lower()
         
-        # Scenario 1: Token rate limit (429 OTPM) -> Reduce token ceiling and retry
+        # Rate Limit Mitigation (429 OTPM)
         if "429" in err_str or "rate_limit_exceeded" in err_str or "output tokens per minute" in err_str:
+            delay_match = re.search(r'try again in ([0-9.]+)s', err_str)
+            sleep_sec = float(delay_match.group(1)) + 0.5 if delay_match else 2.5
+            
             if status_callback:
-                status_callback("info", "Rate limit detected. Adjusting token ceiling...")
-            kwargs["max_tokens"] = 450
+                status_callback("info", f"Rate limit cooling down ({sleep_sec:.1f}s)... failing over to secondary model.")
+            
+            time.sleep(sleep_sec)
+            
+            # Switch to alternate model with an independent token quota
+            alt_model = get_best_available_model(client, exclude_model=active_model, force_refresh=True)
+            kwargs["model"] = alt_model
+            kwargs["max_tokens"] = 380
             try:
                 return client.chat.completions.create(**kwargs)
             except Exception:
-                active_model = get_best_available_model(client, force_refresh=True)
+                # Secondary retry with base model after cooldown
                 kwargs["model"] = active_model
-                kwargs["max_tokens"] = 400
+                kwargs["max_tokens"] = 350
                 return client.chat.completions.create(**kwargs)
 
-        # Scenario 2: Model not found / access error (404 / 400)
+        # Model Not Found / Decommissioned (404 / 400)
         if "404" in err_str or "model_not_found" in err_str or "decommissioned" in err_str or "400" in err_str or "access" in err_str:
             if status_callback:
                 status_callback("info", f"Model `{active_model}` not accessible. Auto-switching to working model...")
-            active_model = get_best_available_model(client, force_refresh=True)
+            active_model = get_best_available_model(client, exclude_model=active_model, force_refresh=True)
             kwargs["model"] = active_model
             return client.chat.completions.create(**kwargs)
             
@@ -210,8 +219,8 @@ def build_contextual_messages(user_input: str, system_prompt: str, max_turns: in
                 role = m.get("role", "user")
                 content = m.get("content", "")
                 if role in ["user", "assistant"] and content:
-                    if role == "assistant" and len(content) > 300:
-                        content = content[:300] + "..."
+                    if role == "assistant" and len(content) > 250:
+                        content = content[:250] + "..."
                     history.append({"role": role, "content": str(content)})
     except Exception:
         pass
@@ -232,7 +241,7 @@ def parse_prompt_financial_parameters(prompt: str) -> tuple[float, float, float,
     margin_match = re.search(r'(\d+(?:\.\d+)?)\s*%\s*ebitda', p)
     margin = float(margin_match.group(1)) / 100.0 if margin_match else 0.25
 
-    wacc_match = re.search(r'(\\d+(?:\\.\\d+)?)\\s*%\\s*wacc', p)
+    wacc_match = re.search(r'(\d+(?:\.\d+)?)\s*%\s*wacc', p)
     wacc = float(wacc_match.group(1)) / 100.0 if wacc_match else 0.10
 
     tg_match = re.search(r'(\\d+(?:\\.\\d+)?)\\s*%\\s*terminal\\s*(?:growth)?', p)
@@ -402,7 +411,7 @@ def run_analyst_agent(
                 preferred_model=selected_model,
                 status_callback=status_callback,
                 messages=messages,
-                max_tokens=750,
+                max_tokens=480,
                 temperature=0.1
             )
             elapsed = time.perf_counter() - start_time
@@ -428,7 +437,7 @@ def run_analyst_agent(
             messages=messages,
             tools=AGENT_TOOLS,
             tool_choice="auto",
-            max_tokens=750,
+            max_tokens=480,
             temperature=0.1
         )
         msg = response.choices[0].message
