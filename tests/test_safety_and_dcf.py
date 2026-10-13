@@ -50,3 +50,20 @@ def test_dcf_rejects_invalid_terminal_growth():
 def test_formatter_preserves_fenced_code_blocks():
     source = "Example:\n\n```python\nprint('$5')\n```"
     assert agent.sanitize_report_formatting(source) == source
+
+
+def test_dcf_audit_prompt_uses_ufcf_and_parses_year_one_revenue():
+    prompt = (
+        "Audit the DCF. Revenue: USD 60M in Year 1, growing 20% annually. "
+        "EBITDA margin: apparently 25%. WACC: apparently 10%. "
+        "Terminal growth: apparently 2.5%."
+    )
+    report, plot_bytes, workbook_bytes = agent.generate_deterministic_dcf_artifacts(prompt)
+    assert "Revenue (USD M)" in report
+    assert "UFCF (USD M)" in report
+    assert "Cash Taxes (USD M)" in report
+    assert "Change in NWC (USD M)" in report
+    assert "Year-1 revenue of USD 60.00M" in report
+    assert "USD 345.70M" not in report
+    assert plot_bytes
+    assert workbook_bytes
