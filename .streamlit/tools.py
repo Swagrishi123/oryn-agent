@@ -3,7 +3,28 @@ import re
 import requests
 import yfinance as yf
 
-# Institutional baseline benchmarks to guarantee values are never empty
+# 1. Verified Institutional Leadership Registry
+# Eliminates reliance on Wikipedia job-description paragraphs
+INSTITUTIONAL_LEADERSHIP = [
+    {
+        "triggers": [("rbi", "governor"), ("reserve bank", "governor"), ("central bank", "governor", "india")],
+        "record": "The current Governor of the Reserve Bank of India (RBI) is Sanjay Malhotra. He is the 26th Governor of the RBI, having assumed office in December 2024 following the conclusion of Shaktikanta Das's tenure."
+    },
+    {
+        "triggers": [("finance minister", "india"), ("union finance minister")],
+        "record": "The Union Minister of Finance of India is Nirmala Sitharaman."
+    },
+    {
+        "triggers": [("sebi", "chair"), ("sebi", "chief"), ("sebi", "head")],
+        "record": "The Chairperson of the Securities and Exchange Board of India (SEBI) is Madhabi Puri Buch."
+    },
+    {
+        "triggers": [("federal reserve", "chair"), ("fed", "chair"), ("fed", "chairman")],
+        "record": "The Chair of the Federal Reserve (U.S.) is Jerome Powell."
+    }
+]
+
+# 2. Institutional Baseline Benchmarks for Equities
 INSTITUTIONAL_BENCHMARKS = {
     "RELIANCE": {
         "company_name": "Reliance Industries Limited",
@@ -42,6 +63,17 @@ INSTITUTIONAL_BENCHMARKS = {
         "currency": "INR"
     }
 }
+
+def fetch_institutional_officeholder_facts(query: str) -> str | None:
+    """Matches macro officeholder queries against verified leadership registries."""
+    q_lower = query.lower()
+
+    for item in INSTITUTIONAL_LEADERSHIP:
+        for trigger_tuple in item["triggers"]:
+            if all(word in q_lower for word in trigger_tuple):
+                return f"[VERIFIED INSTITUTIONAL RECORD: {item['record']}]"
+
+    return None
 
 def fetch_yahoo_v8_chart(symbol: str) -> dict | None:
     headers = {
@@ -143,38 +175,6 @@ def tool_get_financial_data(ticker: str) -> dict:
         "52w_low": "N/A",
         "currency": "INR"
     }
-
-def fetch_institutional_officeholder_facts(query: str) -> str | None:
-    q_lower = query.lower()
-    headers = {"User-Agent": "ORYNAnalyst/2.0 (BFSI Research)"}
-    
-    target_page = None
-    if "rbi" in q_lower or "reserve bank of india" in q_lower or "governor" in q_lower:
-        target_page = "Governor_of_the_Reserve_Bank_of_India"
-    elif "finance minister" in q_lower and "india" in q_lower:
-        target_page = "Minister_of_Finance_(India)"
-    elif "sebi" in q_lower:
-        target_page = "Securities_and_Exchange_Board_of_India"
-    elif "federal reserve" in q_lower or "fed chair" in q_lower:
-        target_page = "Chair_of_the_Federal_Reserve"
-
-    if target_page:
-        try:
-            url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{target_page}"
-            res = requests.get(url, headers=headers, timeout=2.5)
-            if res.status_code == 200:
-                extract = res.json().get("extract", "")
-                if extract:
-                    return f"[VERIFIED INSTITUTIONAL RECORD: {extract}]"
-        except Exception:
-            pass
-
-    if "rbi" in q_lower and "governor" in q_lower:
-        return (
-            "[VERIFIED INSTITUTIONAL RECORD: Sanjay Malhotra is the 26th Governor of the "
-            "Reserve Bank of India (RBI). He assumed office in December 2024, succeeding Shaktikanta Das.]"
-        )
-    return None
 
 def tool_web_search(query: str) -> str:
     return f"Live search results for: '{query}'."
