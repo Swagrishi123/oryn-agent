@@ -14,7 +14,7 @@ SYSTEM_PROMPT = (
     "You are ORYN Analyst, an institutional BFSI quantitative analyst.\n"
     "CORE RULES:\n"
     "1. Respond naturally in the language used by the user.\n"
-    "2. For general or conversational questions (e.g., 'Who is Mark Zuckerberg?', 'What is the capital of China?'), "
+    "2. For general or conversational questions (e.g., 'Who is Abraham Lincoln?', 'What is the capital of China?'), "
     "answer directly and concisely. Do NOT invoke valuation models or tools.\n"
     "3. For valuation and DCF requests, ALWAYS execute python_interpreter to calculate cash flows, "
     "create a matplotlib chart, and write 'model.xlsx'.\n"
@@ -46,6 +46,8 @@ def sanitize_report_formatting(text: str) -> str:
     cleaned = cleaned.replace("`**", "**").replace("**`", "**")
     cleaned = re.sub(r'`([^`\n]+)`', r'\1', cleaned)
     cleaned = cleaned.replace('`', '')
+    # Escape unescaped dollar signs so Streamlit does not interpret them as LaTeX math
+    cleaned = re.sub(r'(?<!\\)\$', r'\$', cleaned)
     return re.sub(r'\n{3,}', '\n\n', cleaned).strip()
 
 def enforce_sandbox_contracts(code_str: str) -> str:
@@ -74,44 +76,72 @@ def resolve_api_key(api_key: str = "") -> str:
         pass
     return os.environ.get("GROQ_API_KEY", "").strip()
 
-def get_best_available_model(client: Groq) -> str:
-    """Dynamically detects active models on the Groq account without hardcoding broken fallbacks."""
+def get_best_available_model(client: Groq, force_refresh: bool = False) -> str:
+    """Discovers accessible models dynamically by testing live access to avoid 404 errors."""
     global CACHED_WORKING_MODEL
-    if CACHED_WORKING_MODEL:
+    if CACHED_WORKING_MODEL and not force_refresh:
         return CACHED_WORKING_MODEL
 
     try:
-        all_ids = [m.id for m in client.models.list().data]
+        models_data = client.models.list().data
+        available_ids = [m.id for m in models_data]
     except Exception:
-        all_ids = []
+        available_ids = []
 
-    valid_candidates = [
-        mid for mid in all_ids
-        if "/" not in mid and not any(b in mid.lower() for b in ["guard", "whisper", "vision", "embed", "audio", "orpheus", "allam", "arabic"])
+    blacklist = ["guard", "whisper", "vision", "embed", "audio", "orpheus", "allam", "arabic", "safeguard"]
+    candidates = [
+        mid for mid in available_ids
+        if "/" not in mid and not any(b in mid.lower() for b in blacklist)
     ]
 
-    # Groq active production models in priority order
-    priority = [
+    preferred = [
         "llama-3.3-70b-versatile",
         "llama3-70b-8192",
         "llama3-8b-8192",
         "mixtral-8x7b-32768",
         "gemma2-9b-it",
-        "deepseek-r1-distill-llama-70b"
+        "llama-3.2-3b-preview",
+        "llama-3.2-1b-preview",
+        "deepseek-r1-distill-llama-70b",
+        "qwen-2.5-32b"
     ]
 
-    for model_name in priority:
-        if model_name in valid_candidates:
+    test_queue = [m for m in preferred if m in candidates] + [m for m in candidates if m not in preferred]
+    if not test_queue:
+        test_queue = preferred
+
+    for model_name in test_queue:
+        try:
+            client.chat.completions.create(
+                model=model_name,
+                messages=[{"role": "user", "content": "ping"}],
+                max_tokens=1
+            )
             CACHED_WORKING_MODEL = model_name
             return model_name
+        except Exception:
+            continue
 
-    if valid_candidates:
-        CACHED_WORKING_MODEL = valid_candidates[0]
-        return CACHED_WORKING_MODEL
-
-    # Default to Groq's primary flagship model
-    CACHED_WORKING_MODEL = "llama-3.3-70b-versatile"
+    CACHED_WORKING_MODEL = test_queue[0] if test_queue else "llama3-8b-8192"
     return CACHED_WORKING_MODEL
+
+def create_completion_with_fallback(client: Groq, status_callback=None, **kwargs):
+    """Executes Groq completions with automatic model failover if 404 or access error occurs."""
+    global CACHED_WORKING_MODEL
+    active_model = get_best_available_model(client)
+    kwargs["model"] = active_model
+
+    try:
+        return client.chat.completions.create(**kwargs)
+    except Exception as e:
+        err_str = str(e).lower()
+        if "404" in err_str or "model_not_found" in err_str or "access" in err_str:
+            if status_callback:
+                status_callback("info", f"Model `{active_model}` not accessible. Auto-switching to alternate model...")
+            active_model = get_best_available_model(client, force_refresh=True)
+            kwargs["model"] = active_model
+            return client.chat.completions.create(**kwargs)
+        raise e
 
 def parse_prompt_financial_parameters(prompt: str) -> tuple[float, float, float, float, float, int]:
     p = prompt.lower()
@@ -136,7 +166,7 @@ def parse_prompt_financial_parameters(prompt: str) -> tuple[float, float, float,
     return base_rev, growth, margin, wacc, tg, 5
 
 def df_to_markdown_table(df: pd.DataFrame, include_index: bool = False) -> str:
-    """Generates standard Markdown tables with proper spacing for Streamlit rendering."""
+    """Generates standard Markdown tables with proper spacing and escaped currency symbols."""
     if include_index:
         headers = ["Parameter"] + [str(col) for col in df.columns]
         rows = [[str(idx)] + [str(val) for val in row] for idx, row in zip(df.index, df.values)]
@@ -147,7 +177,7 @@ def df_to_markdown_table(df: pd.DataFrame, include_index: bool = False) -> str:
     header_line = "| " + " | ".join(headers) + " |"
     sep_line = "| " + " | ".join(["---"] * len(headers)) + " |"
     row_lines = ["| " + " | ".join(r) + " |" for r in rows]
-    return "\n" + "\n".join([header_line, sep_line] + row_lines) + "\n"
+    return "\n\n" + "\n".join([header_line, sep_line] + row_lines) + "\n\n"
 
 def generate_deterministic_dcf_artifacts(user_input: str) -> tuple[str, bytes, bytes]:
     base_rev, growth, margin, wacc, tg, years = parse_prompt_financial_parameters(user_input)
@@ -174,18 +204,18 @@ def generate_deterministic_dcf_artifacts(user_input: str) -> tuple[str, bytes, b
         for g in tg_range:
             cur_tv = (ufcf[-1] * (1 + g)) / (w - g)
             cur_pv_tv = cur_tv / ((1 + w) ** years)
-            col.append(f"${pv_cf + cur_pv_tv:.2f}M")
+            col.append(f"\\${pv_cf + cur_pv_tv:.2f}M")
         sens_data[f"WACC {w*100:.1f}%"] = col
 
     df_sens = pd.DataFrame(sens_data, index=[f"TG {g*100:.1f}%" for g in tg_range])
 
     df_proj = pd.DataFrame({
         "Year": [str(y) for y in years_idx],
-        "Revenue ($M)": [f"${x:.2f}M" for x in rev],
-        "EBITDA ($M)": [f"${x:.2f}M" for x in ebitda],
-        "UFCF ($M)": [f"${x:.2f}M" for x in ufcf],
+        "Revenue ($M)": [f"\\${x:.2f}M" for x in rev],
+        "EBITDA ($M)": [f"\\${x:.2f}M" for x in ebitda],
+        "UFCF ($M)": [f"\\${x:.2f}M" for x in ufcf],
         "Discount Factor": [f"{x:.4f}" for x in df],
-        "PV of UFCF ($M)": [f"${x:.2f}M" for x in pv_ufcf]
+        "PV of UFCF ($M)": [f"\\${x:.2f}M" for x in pv_ufcf]
     })
 
     # Render Visual Chart Artifact
@@ -229,10 +259,10 @@ def generate_deterministic_dcf_artifacts(user_input: str) -> tuple[str, bytes, b
             "PV of Terminal Value", "Enterprise Value"
         ],
         "Value": [
-            f"${base_rev:.2f}M", f"{growth*100:.1f}%", f"{margin*100:.1f}%",
+            f"\\${base_rev:.2f}M", f"{growth*100:.1f}%", f"{margin*100:.1f}%",
             f"{wacc*100:.1f}%", f"{tg*100:.2f}%",
-            f"${sum_pv_ufcf:.2f}M", f"${tv:.2f}M",
-            f"${pv_tv:.2f}M", f"**${ev:.2f}M**"
+            f"\\${sum_pv_ufcf:.2f}M", f"\\${tv:.2f}M",
+            f"\\${pv_tv:.2f}M", f"**\\${ev:.2f}M**"
         ]
     })
 
@@ -245,29 +275,26 @@ def generate_deterministic_dcf_artifacts(user_input: str) -> tuple[str, bytes, b
 An unlevered Discounted Cash Flow (DCF) model was conducted over a **{years}-year discrete forecast horizon** applying a **{wacc*100:.1f}% WACC** discount rate and a **{tg*100:.2f}% perpetual growth rate**.
 
 **Core Valuation Metrics:**
-
 {summary_table_md}
 
 ---
 
 ### 1. 5-Year Discrete Cash Flow Projections
-
 {proj_table_md}
 
-* **Forecast Cash Flow Expansion:** UFCF expands from **${ufcf[0]:.2f}M** (Year 1) to **${ufcf[-1]:.2f}M** (Year 5).
-* **Discounted Explicit Value:** The 5-year discrete forecast contributes **${sum_pv_ufcf:.2f}M** ({(sum_pv_ufcf/ev)*100:.1f}% of Enterprise Value).
+* **Forecast Cash Flow Expansion:** UFCF expands from **\\${ufcf[0]:.2f}M** (Year 1) to **\\${ufcf[-1]:.2f}M** (Year 5).
+* **Discounted Explicit Value:** The 5-year discrete forecast contributes **\\${sum_pv_ufcf:.2f}M** ({(sum_pv_ufcf/ev)*100:.1f}% of Enterprise Value).
 
 ---
 
 ### 2. Terminal Value & Enterprise Value
 
-* **Gordon Growth Terminal Value:** **${tv:.2f}M** (discounted PV of **${pv_tv:.2f}M**, representing {(pv_tv/ev)*100:.1f}% of Enterprise Value).
-* **Implied Enterprise Value (EV):** **${ev:.2f}M**
+* **Gordon Growth Terminal Value:** **\\${tv:.2f}M** (discounted PV of **\\${pv_tv:.2f}M**, representing {(pv_tv/ev)*100:.1f}% of Enterprise Value).
+* **Implied Enterprise Value (EV):** **\\${ev:.2f}M**
 
 ---
 
 ### 3. Sensitivity Analysis (Enterprise Value in $M)
-
 {sens_table_md}
 """
 
@@ -293,17 +320,14 @@ def run_analyst_agent(
     except Exception as e:
         return f"⚠️ **Client Error**: {e}", None, None, 0.0
 
-    active_model = get_best_available_model(client)
-    if status_callback:
-        status_callback("info", f"Connected to Groq Engine: `{active_model}`")
-
     is_valuation_query = any(k in user_input.lower() for k in VALUATION_KEYWORDS)
 
-    # 1. Direct answering for non-valuation queries (e.g., "Who is Mark Zuckerberg?")
+    # 1. Direct answering for non-valuation queries (e.g., "Who is Abraham Lincoln?")
     if not is_valuation_query:
         try:
-            resp = client.chat.completions.create(
-                model=active_model,
+            resp = create_completion_with_fallback(
+                client=client,
+                status_callback=status_callback,
                 messages=[
                     {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user", "content": user_input}
@@ -324,8 +348,9 @@ def run_analyst_agent(
         status_callback("info", "Executing quantitative model in sandbox...")
 
     try:
-        response = client.chat.completions.create(
-            model=active_model,
+        response = create_completion_with_fallback(
+            client=client,
+            status_callback=status_callback,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user_input}
