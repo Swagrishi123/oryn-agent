@@ -23,7 +23,6 @@ except Exception:
     def fetch_institutional_officeholder_facts(x):
         return None
 
-# English words to prevent uppercase prompt words from being treated as tickers
 COMMON_ENGLISH_STOPWORDS = {
     "CAN", "YOU", "PULL", "UP", "LIVE", "MARKET", "DATA", "FOR", "AND", "SHOW",
     "THEIR", "IN", "CLEAN", "TABLE", "WHAT", "WHO", "IS", "THE", "GIVE", "GET",
@@ -38,14 +37,14 @@ SYSTEM_PROMPT = (
     "CRITICAL CONTEXT & FACT PROTOCOL:\n"
     "- When [VERIFIED LIVE EXCHANGE DATA] or [VERIFIED INSTITUTIONAL RECORD] is provided in the prompt, "
     "you MUST base your analysis strictly on those facts. Never contradict the provided context.\n"
-    "- For leadership questions (e.g., RBI Governor), accurately state the current officeholder using the verified record.\n\n"
+    "- For leadership questions (e.g., RBI Governor, Governor of West Bengal), accurately state the officeholder and tenure using the verified record.\n\n"
     "CRITICAL TABLE & COMPLETION RULES:\n"
     "1. COMPLETE EVERY DELIVERABLE: Never cut off mid-sentence or stop mid-table. Always generate every row and column to completion.\n"
     "2. DIRECT STRUCTURAL DELIVERY: Eliminate introductory pleasantries and filler text. Begin directly with the analysis header.\n"
     "3. STRICT MARKDOWN TABLE SYNTAX:\n"
     "   - Every table row MUST be separated by an actual newline (\\n) and start and end with a pipe (|).\n"
     "   - Always place the divider row (| :--- | :--- |) on its own separate line directly below the header row.\n"
-    "   - Never join multiple table rows together on a single line.\n"
+    "   - Inside table data cells, use plain numbers without naked currency symbols to ensure clean table borders.\n"
     "4. CHAPTER 11 RESTRUCTURING & WATERFALL RULES:\n"
     "   - Always present priority distributions inside a single consolidated Markdown table.\n"
     "   - Do NOT write repetitive text blocks like 'Step 1: DIP... Step 2: First Lien...'. "
@@ -172,8 +171,9 @@ def sanitize_report_formatting(text: str) -> str:
             output.append(line)
 
     res = '\n'.join(output)
-    # Escapes raw dollar signs to prevent KaTeX table collapsing
-    res = re.sub(r'(?<!\\)\$', r'\\$', res)
+    # Neutralize KaTeX inline math hijacking: KaTeX strictly forbids whitespace after opening $
+    # Converting '$100' -> '$ 100' preserves the currency symbol while preventing KaTeX from entering math mode
+    res = re.sub(r'\$([0-9])', r'$ \1', res)
     return re.sub(r'\n{3,}', '\n\n', res).strip()
 
 def is_quantitative_model_request(prompt: str) -> bool:
@@ -247,7 +247,6 @@ def create_completion_with_fallback(client: Groq, preferred_model: str = None, s
     except Exception as e:
         err_str = str(e).lower()
 
-        # OTPM rate limit recovery
         if any(term in err_str for term in ["output tokens per minute", "otpm", "reduce max_tokens", "rate_limit_exceeded"]):
             if kwargs["max_tokens"] > 500:
                 kwargs["max_tokens"] = 500
@@ -296,16 +295,18 @@ def generate_deterministic_dcf_artifacts(user_input: str) -> tuple[str, bytes, b
     pv_tv = tv / (1.10 ** years)
     ev = sum_pv_ufcf + pv_tv
 
+    # Institutional standard formatting: units in headers, clean numbers in data cells
     df_proj = pd.DataFrame({
         "Year": [str(y) for y in years_idx],
-        "Revenue (USD M)": [f"${x:.2f}M" for x in rev],
-        "EBITDA (USD M)": [f"${x:.2f}M" for x in ebitda],
-        "PV of UFCF (USD M)": [f"${x:.2f}M" for x in pv_ufcf]
+        "Revenue (USD M)": [f"{x:.2f}" for x in rev],
+        "EBITDA (USD M)": [f"{x:.2f}" for x in ebitda],
+        "Discount Factor": [f"{x:.4f}" for x in df],
+        "PV of UFCF (USD M)": [f"{x:.2f}" for x in pv_ufcf]
     })
 
     fig, ax = plt.subplots(figsize=(8, 4))
     ax.bar(['PV Cash Flows', 'PV Terminal Value'], [sum_pv_ufcf, pv_tv], color=['#4a148c', '#7b1fa2'], width=0.45)
-    ax.set_title(f'Enterprise Value: ${ev:.2f}M', fontsize=12, fontweight='bold')
+    ax.set_title(f'Enterprise Value: $ {ev:.2f}M', fontsize=12, fontweight='bold')
     plt.tight_layout()
     
     img_buf = io.BytesIO()
@@ -323,12 +324,12 @@ def generate_deterministic_dcf_artifacts(user_input: str) -> tuple[str, bytes, b
 
     calc_briefing = (
         f"### 📊 Institutional DCF Valuation Schedule\n\n"
-        f"**Implied Enterprise Value:** **${ev:.2f}M**\n\n"
+        f"**Implied Enterprise Value:** **$ {ev:.2f}M**\n\n"
         f"{table_md}\n\n"
-        f"* **Cumulative PV of Cash Flows:** ${sum_pv_ufcf:.2f}M\n"
-        f"* **Terminal Value (TV):** ${tv:.2f}M\n"
-        f"* **Present Value of TV:** ${pv_tv:.2f}M\n"
-        f"* **Implied Enterprise Value (EV):** **${ev:.2f}M**"
+        f"* **Cumulative PV of Cash Flows:** $ {sum_pv_ufcf:.2f}M\n"
+        f"* **Terminal Value (TV):** $ {tv:.2f}M\n"
+        f"* **Present Value of TV:** $ {pv_tv:.2f}M\n"
+        f"* **Implied Enterprise Value (EV):** **$ {ev:.2f}M**"
     )
     return calc_briefing, img_buf.getvalue(), excel_buf.getvalue()
 
