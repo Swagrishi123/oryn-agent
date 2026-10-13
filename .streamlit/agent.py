@@ -64,6 +64,9 @@ SYSTEM_PROMPT = (
 CACHED_WORKING_MODEL = None
 
 KNOWN_ENTITIES = {
+    "lic": "LICI",
+    "lici": "LICI",
+    "life insurance corporation": "LICI",
     "reliance": "RELIANCE",
     "tcs": "TCS",
     "tata consultancy": "TCS",
