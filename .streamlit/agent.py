@@ -138,6 +138,20 @@ def parse_prompt_financial_parameters(prompt: str) -> tuple[float, float, float,
 
     return base_rev, growth, margin, wacc, tg, 5
 
+def df_to_markdown_table(df: pd.DataFrame, include_index: bool = False) -> str:
+    """Pure Python table formatter that guarantees clean Markdown without external dependencies."""
+    if include_index:
+        headers = [""] + [str(col) for col in df.columns]
+        rows = [[str(idx)] + [str(val) for val in row] for idx, row in zip(df.index, df.values)]
+    else:
+        headers = [str(col) for col in df.columns]
+        rows = [[str(val) for val in row] for row in df.values]
+    
+    header_line = "| " + " | ".join(headers) + " |"
+    sep_line = "| " + " | ".join(["---"] * len(headers)) + " |"
+    row_lines = ["| " + " | ".join(r) + " |" for r in rows]
+    return "\n".join([header_line, sep_line] + row_lines)
+
 def generate_deterministic_dcf_artifacts(user_input: str) -> tuple[str, bytes, bytes]:
     base_rev, growth, margin, wacc, tg, years = parse_prompt_financial_parameters(user_input)
     years_idx = list(range(1, years + 1))
@@ -163,26 +177,27 @@ def generate_deterministic_dcf_artifacts(user_input: str) -> tuple[str, bytes, b
         for g in tg_range:
             cur_tv = (ufcf[-1] * (1 + g)) / (w - g)
             cur_pv_tv = cur_tv / ((1 + w) ** years)
-            col.append(round(pv_cf + cur_pv_tv, 2))
+            col.append(f"{pv_cf + cur_pv_tv:.2f}")
         sens_data[f"WACC {w*100:.1f}%"] = col
 
     df_sens = pd.DataFrame(sens_data, index=[f"TG {g*100:.1f}%" for g in tg_range])
 
     df_proj = pd.DataFrame({
-        "Year": years_idx,
-        "Revenue ($M)": [round(x, 2) for x in rev],
-        "EBITDA ($M)": [round(x, 2) for x in ebitda],
-        "UFCF ($M)": [round(x, 2) for x in ufcf],
-        "Discount Factor": [round(x, 4) for x in df],
-        "PV of UFCF ($M)": [round(x, 2) for x in pv_ufcf]
+        "Year": [str(y) for y in years_idx],
+        "Revenue ($M)": [f"{x:.2f}" for x in rev],
+        "EBITDA ($M)": [f"{x:.2f}" for x in ebitda],
+        "UFCF ($M)": [f"{x:.2f}" for x in ufcf],
+        "Discount Factor": [f"{x:.4f}" for x in df],
+        "PV of UFCF ($M)": [f"{x:.2f}" for x in pv_ufcf]
     })
 
+    # Render Visual Chart Artifact
     fig, ax = plt.subplots(figsize=(8, 4.5))
     components = ['PV of Cash Flows', 'PV of Terminal Value']
     values = [sum_pv_ufcf, pv_tv]
     colors = ['#1f77b4', '#2ca02c']
     bars = ax.bar(components, values, color=colors, width=0.45)
-    ax.set_title(f'Enterprise Value Breakdown ($M) — Total: ${ev:.2f}M', fontsize=12, fontweight='bold', pad=12)
+    ax.set_title(f'Enterprise Value Breakdown ($M) — Total:${ev:.2f}M', fontsize=12, fontweight='bold', pad=12)
     ax.set_ylabel('Present Value ($M)')
     for bar in bars:
         yval = bar.get_height()
@@ -196,6 +211,7 @@ def generate_deterministic_dcf_artifacts(user_input: str) -> tuple[str, bytes, b
     plt.close(fig)
     plot_bytes = img_buf.getvalue()
 
+    # Generate Multi-Sheet Excel Workbook
     excel_buf = io.BytesIO()
     with pd.ExcelWriter(excel_buf, engine='openpyxl') as writer:
         df_proj.to_excel(writer, sheet_name='DCF_Projections', index=False)
@@ -207,16 +223,57 @@ def generate_deterministic_dcf_artifacts(user_input: str) -> tuple[str, bytes, b
         df_sens.to_excel(writer, sheet_name='Sensitivity_Matrix')
     excel_bytes = excel_buf.getvalue()
 
-    calc_text = (
-        f"=== 5-YEAR PROJECTION TABLE ===\n{df_proj.to_string(index=False)}\n\n"
-        f"PV of 5-Yr Cash Flows: ${sum_pv_ufcf:.2f}M\n"
-        f"Terminal Value: ${tv:.2f}M\n"
-        f"PV of Terminal Value: ${pv_tv:.2f}M\n"
-        f"Implied Enterprise Value: ${ev:.2f}M\n\n"
-        f"=== SENSITIVITY MATRIX (EV $M) ===\n{df_sens.to_string()}"
-    )
+    # Format Structured Institutional Markdown Briefing
+    summary_df = pd.DataFrame({
+        "Metric": [
+            "Base Revenue", "Annual Growth", "EBITDA Margin", 
+            "WACC (Discount Rate)", "Terminal Growth Rate",
+            "PV of 5-Yr Cash Flows", "Terminal Value (Nominal)",
+            "PV of Terminal Value", "Enterprise Value"
+        ],
+        "Value": [
+            f"${base_rev:.2f}M", f"{growth*100:.1f}%", f"{margin*100:.1f}%",
+            f"{wacc*100:.1f}%", f"{tg*100:.2f}%",
+            f"${sum_pv_ufcf:.2f}M", f"${tv:.2f}M",
+            f"${pv_tv:.2f}M", f"**${ev:.2f}M**"
+        ]
+    })
 
-    return calc_text, plot_bytes, excel_bytes
+    proj_table_md = df_to_markdown_table(df_proj, include_index=False)
+    summary_table_md = df_to_markdown_table(summary_df, include_index=False)
+    sens_table_md = df_to_markdown_table(df_sens, include_index=True)
+
+    calc_briefing = f"""### 📊 Executive Valuation Briefing
+
+An unlevered Discounted Cash Flow (DCF) model was performed over a **{years}-year forecast horizon** applying a **{wacc*100:.1f}% WACC** discount rate and a **{tg*100:.2f}% perpetual growth rate**.
+
+**Core Valuation Metrics:**
+{summary_table_md}
+
+---
+
+### 1. 5-Year Discrete Cash Flow Projections
+
+{proj_table_md}
+
+* **Forecast Cash Flow Expansion:** UFCF expands from **${float(df_proj.iloc[0]['UFCF ($M)']):.2f}M** (Year 1) to **${float(df_proj.iloc[-1]['UFCF ($M)']):.2f}M** (Year 5).
+* **Discounted Explicit Value:** The 5-year discrete forecast contributes **${sum_pv_ufcf:.2f}M** ({(sum_pv_ufcf/ev)*100:.1f}% of Enterprise Value).
+
+---
+
+### 2. Terminal Value & Enterprise Value
+
+* **Gordon Growth Terminal Value:** **${tv:.2f}M** (discounted PV of **${pv_tv:.2f}M**, representing {(pv_tv/ev)*100:.1f}% of Enterprise Value).
+* **Implied Enterprise Value (EV):** **${ev:.2f}M**
+
+---
+
+### 3. Sensitivity Analysis (Enterprise Value in $M)
+
+{sens_table_md}
+"""
+
+    return calc_briefing, plot_bytes, excel_bytes
 
 def run_analyst_agent(
     user_input: str,
@@ -244,6 +301,7 @@ def run_analyst_agent(
 
     is_valuation_query = any(k in user_input.lower() for k in VALUATION_KEYWORDS)
 
+    # 1. Direct answering for non-valuation queries (e.g., "Who is the father of India?")
     if not is_valuation_query:
         try:
             resp = client.chat.completions.create(
@@ -259,9 +317,10 @@ def run_analyst_agent(
         except Exception as e:
             return f"Error: {e}", None, None, time.perf_counter() - start_time
 
+    # 2. Valuation pipeline
     generated_plot = None
     generated_excel = None
-    tool_outputs = []
+    structured_briefing = ""
 
     if status_callback:
         status_callback("info", "Executing quantitative model in sandbox...")
@@ -288,50 +347,19 @@ def run_analyst_agent(
                         out, p_bytes, x_bytes = tool_python_interpreter(safe_code, hitl_enabled=hitl_enabled)
                         if p_bytes: generated_plot = p_bytes
                         if x_bytes: generated_excel = x_bytes
-                        if "Python Execution Error" not in out:
-                            tool_outputs.append(f"Calculation Data:\n{out}")
     except Exception:
         pass
 
-    if not generated_plot or not generated_excel or not tool_outputs:
+    # 3. Guaranteed Quantitative Fallback: generates complete Markdown tables, plot, and Excel
+    if not generated_plot or not generated_excel:
         if status_callback:
             status_callback("info", "Executing deterministic quantitative engine...")
-        calc_data, plot_bytes, excel_bytes = generate_deterministic_dcf_artifacts(user_input)
+        briefing_text, plot_bytes, excel_bytes = generate_deterministic_dcf_artifacts(user_input)
         generated_plot = plot_bytes
         generated_excel = excel_bytes
-        tool_outputs.append(f"Calculation Data:\n{calc_data}")
+        structured_briefing = briefing_text
 
-    if status_callback:
-        status_callback("info", "Generating executive valuation briefing...")
-
-    combined_results = "\n\n".join(tool_outputs)
-
-    try:
-        synth = client.chat.completions.create(
-            model=active_model,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {
-                    "role": "user",
-                    "content": (
-                        f"User request: {user_input}\n\n"
-                        f"Deterministic Sandbox Calculations:\n{combined_results}\n\n"
-                        "BRIEFING REQUIREMENTS:\n"
-                        "- Provide an Executive Valuation Summary.\n"
-                        "- Output the 5-Year Projection Table in clean Markdown.\n"
-                        "- Present the Terminal Value breakdown and Sensitivity Matrix.\n"
-                        "- Use strictly the calculated numbers from the sandbox.\n"
-                        "- NEVER output Python scripts or import blocks.\n"
-                        "- NEVER use backticks (`) around currency numbers."
-                    )
-                }
-            ],
-            max_tokens=2500
-        )
-        raw_text = synth.choices[0].message.content or combined_results
-        final_text = sanitize_report_formatting(raw_text)
-    except Exception as e:
-        final_text = sanitize_report_formatting(f"### 📊 Valuation Analysis Completed\n\n{combined_results}")
-
+    # 4. Final Executive Delivery
+    final_text = sanitize_report_formatting(structured_briefing)
     elapsed = time.perf_counter() - start_time
     return final_text, generated_plot, generated_excel, elapsed
