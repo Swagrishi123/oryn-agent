@@ -14,9 +14,13 @@ SYSTEM_PROMPT = (
     "You are ORYN Analyst, an elite institutional BFSI quantitative analyst and investment banking advisor.\n\n"
     "CRITICAL MARKET DATA RULE:\n"
     "- When [LIVE EXCHANGE DATA] is provided, you MUST construct the analysis around those exact metrics.\n"
-    "- NEVER refuse a user by saying 'I do not have real-time market data'. If data is present, analyze it directly.\n\n"
+    "- Output real numbers directly in Markdown tables. If a number is an estimate, state it directly in plain text (e.g., '₹1,280 (Est.)').\n\n"
+    "ABSOLUTE PROHIBITION ON CODE TEMPLATES & FAKE APIS:\n"
+    "- NEVER output Jinja templates, brackets, pseudo-code, or fictional functions like '{oryn.get_current_share_price(...)}' or '{oryn.get_market_cap(...)}'.\n"
+    "- NEVER claim or imply that the user needs an 'ORYN API' enabled.\n"
+    "- Never refuse with 'I don't have real-time data'. Analyze the provided numbers or state reasonable baseline estimates with an institutional disclaimer.\n\n"
     "CRITICAL FORMATTING & STRUCTURAL RULES:\n"
-    "1. DIRECT STRUCTURAL DELIVERY: Eliminate all introductory greetings, pleasantries, and meta-commentary. "
+    "1. DIRECT STRUCTURAL DELIVERY: Eliminate introductory greetings, pleasantries, and meta-commentary. "
     "Begin immediately with the report title.\n"
     "2. STRICT MARKDOWN TABLE SYNTAX:\n"
     "   - Every table row MUST be separated by an actual newline (\\n) and start/end with a pipe (|).\n"
@@ -91,25 +95,31 @@ def extract_and_fetch_live_data(prompt: str, status_callback=None) -> str:
         try:
             data = tool_get_financial_data(ticker)
             if "error" not in data:
-                price = data.get("current_price")
-                mcap = data.get("market_cap")
-                high = data.get("52w_high")
-                low = data.get("52w_low")
-                resolved = data.get("ticker_resolved")
+                price = data.get("current_price", "N/A")
+                mcap = data.get("market_cap", "N/A")
+                high = data.get("52w_high", "N/A")
+                low = data.get("52w_low", "N/A")
+                pe = data.get("pe_ratio", "N/A")
+                resolved = data.get("ticker_resolved", ticker)
                 
                 if status_callback:
-                    status_callback("info", f"✅ Retrieved {ticker} live price: {price}")
+                    status_callback("info", f"✅ {ticker} Live Price: {price} | Market Cap: {mcap}")
                 
                 results.append(
-                    f"- Company: {ticker} ({resolved}) | Price: {price} | Market Cap: {mcap} | "
-                    f"52W High: {high} | 52W Low: {low}"
+                    f"- Company: {ticker} ({resolved}) | Live Price: {price} | Market Cap: {mcap} | "
+                    f"P/E: {pe} | 52W High: {high} | 52W Low: {low}"
                 )
-        except Exception:
-            continue
+            else:
+                if status_callback:
+                    status_callback("warning", f"⚠️ Live feed notice: {data.get('error')}")
+        except Exception as e:
+            if status_callback:
+                status_callback("warning", f"⚠️ Error fetching {ticker}: {e}")
 
     if results:
         return "\n\n[LIVE EXCHANGE DATA - MANDATORY REFERENCE FOR ANALYSIS]:\n" + "\n".join(results) + "\n\n"
-    return ""
+    else:
+        return "\n\n[NOTICE: Live feed temporarily unreachable. Use established baseline figures in plain numbers with a standard disclaimer. DO NOT output code templates or placeholder tags like {oryn.get_...}.]\n\n"
 
 def is_quantitative_model_request(prompt: str) -> bool:
     p = prompt.lower()
