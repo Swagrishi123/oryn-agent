@@ -6,7 +6,7 @@ import datetime
 import importlib
 import sys
 
-# Force Streamlit to load the newest agent from disk
+# Ensure clean reload of agent from disk
 if "agent" in sys.modules:
     importlib.reload(sys.modules["agent"])
 import agent
@@ -61,17 +61,19 @@ with st.sidebar:
     if key_input:
         st.session_state.api_key = key_input.strip()
 
-active_model = st.selectbox(
+    active_model = st.selectbox(
         "Reasoning Engine:",
         options=[
             "llama-3.3-70b-versatile",
+            "llama-3.1-8b-instant",
             "llama3-70b-8192",
             "llama3-8b-8192",
             "mixtral-8x7b-32768"
         ],
         index=0,
-        help="Verified active Groq reasoning engines"
-    )    hitl_enabled = st.toggle("🛡️ HITL Safety Guardrails", value=True)
+        help="Institutional reasoning engines on Groq"
+    )
+    hitl_enabled = st.toggle("🛡️ HITL Safety Guardrails", value=True)
 
 # --- Helper Functions ---
 def strip_leaked_code(text: str) -> str:
@@ -85,7 +87,7 @@ def strip_leaked_code(text: str) -> str:
     text = re.sub(r"\*\s+\*", "", text)
     text = text.replace(r"\approx", "≈").replace(r"\times", "×")
 
-    # REPAIR COLLAPSED TABLES: turn side-by-side '| |' into separate lines
+    # Repair collapsed markdown tables
     text = re.sub(r'\|\s*\|', '|\n|', text)
     text = re.sub(r'([^\n])\n(\|.*\|)', r'\1\n\n\2', text)
     text = re.sub(r'(\|.*\|)\n([^\n|])', r'\1\n\n\2', text)
@@ -127,7 +129,7 @@ def build_html_report(text: str, plot_bytes: bytes | None) -> str:
 </html>"""
 
 def render_download_suite(text: str, plot_bytes: bytes | None, excel_bytes: bytes | None, key_prefix: str):
-    """Generates download options for every response."""
+    """Generates one-click download buttons for text, HTML, PNG, and XLSX files."""
     buttons = [
         {
             "label": "📥 Download Memo (.txt)",
