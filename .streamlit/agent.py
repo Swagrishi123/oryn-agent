@@ -83,10 +83,10 @@ def get_best_available_model(client: Groq) -> str:
     except Exception:
         all_ids = []
 
-    valid_candidates = [
-        mid for mid in all_ids
-        if "/" not in mid and not any(b in mid.lower() for b in ["guard", "whisper", "vision", "embed", "audio", "orpheus"])
-    ]
+   valid_candidates = [
+    mid for mid in all_ids
+    if "/" not in mid and not any(b in mid.lower() for b in ["guard", "whisper", "vision", "embed", "audio", "orpheus", "allam", "arabic"])
+]
 
     priority = [
         "llama-3.3-70b-versatile",
