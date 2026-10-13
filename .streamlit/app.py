@@ -169,7 +169,7 @@ def render_download_suite(text: str, plot_bytes: bytes | None, excel_bytes: byte
 # --- Render Chat History ---
 for idx, msg in enumerate(st.session_state.messages):
     with st.chat_message(msg.get("role", "assistant")):
-        st.markdown(clean_for_ui(msg.get("content", "")))
+        st.markdown(clean_for_ui(msg.get("content", "")), unsafe_allow_html=True)
         if msg.get("image"):
             st.image(msg["image"], caption="Generated Visual Artifact", use_container_width=True)
         if msg.get("role") == "assistant":
@@ -212,7 +212,7 @@ if user_input:
             status_container.update(label=f"✅ Complete ({elapsed:.2f}s)", state="complete", expanded=False)
 
             clean_display_text = clean_for_ui(final_text)
-            st.markdown(clean_display_text)
+            st.markdown(clean_display_text, unsafe_allow_html=True)
 
             if generated_plot:
                 st.image(generated_plot, caption="Generated Visual Artifact", use_container_width=True)
