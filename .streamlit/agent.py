@@ -84,10 +84,10 @@ def get_best_available_model(client: Groq) -> str:
     except Exception:
         all_ids = []
 
-   valid_candidates = [
-    mid for mid in all_ids
-    if "/" not in mid and not any(b in mid.lower() for b in ["guard", "whisper", "vision", "embed", "audio", "orpheus", "allam", "arabic"])
-]
+    valid_candidates = [
+        mid for mid in all_ids
+        if "/" not in mid and not any(b in mid.lower() for b in ["guard", "whisper", "vision", "embed", "audio", "orpheus", "allam", "arabic"])
+    ]
 
     priority = [
         "llama-3.3-70b-versatile",
@@ -139,7 +139,6 @@ def parse_prompt_financial_parameters(prompt: str) -> tuple[float, float, float,
     return base_rev, growth, margin, wacc, tg, 5
 
 def generate_deterministic_dcf_artifacts(user_input: str) -> tuple[str, bytes, bytes]:
-    """Guaranteed quantitative DCF calculation engine that outputs exact data, chart, and Excel file."""
     base_rev, growth, margin, wacc, tg, years = parse_prompt_financial_parameters(user_input)
     years_idx = list(range(1, years + 1))
 
@@ -155,7 +154,6 @@ def generate_deterministic_dcf_artifacts(user_input: str) -> tuple[str, bytes, b
     pv_tv = tv / ((1 + wacc) ** years)
     ev = sum_pv_ufcf + pv_tv
 
-    # Sensitivity Matrix
     wacc_range = [wacc - 0.02, wacc - 0.01, wacc, wacc + 0.01, wacc + 0.02]
     tg_range = [tg - 0.01, tg - 0.005, tg, tg + 0.005, tg + 0.01]
     sens_data = {}
@@ -179,7 +177,6 @@ def generate_deterministic_dcf_artifacts(user_input: str) -> tuple[str, bytes, b
         "PV of UFCF ($M)": [round(x, 2) for x in pv_ufcf]
     })
 
-    # Render Matplotlib Chart
     fig, ax = plt.subplots(figsize=(8, 4.5))
     components = ['PV of Cash Flows', 'PV of Terminal Value']
     values = [sum_pv_ufcf, pv_tv]
@@ -199,7 +196,6 @@ def generate_deterministic_dcf_artifacts(user_input: str) -> tuple[str, bytes, b
     plt.close(fig)
     plot_bytes = img_buf.getvalue()
 
-    # Create Multi-Sheet Excel Workbook
     excel_buf = io.BytesIO()
     with pd.ExcelWriter(excel_buf, engine='openpyxl') as writer:
         df_proj.to_excel(writer, sheet_name='DCF_Projections', index=False)
@@ -248,7 +244,6 @@ def run_analyst_agent(
 
     is_valuation_query = any(k in user_input.lower() for k in VALUATION_KEYWORDS)
 
-    # 1. Direct answering for non-valuation queries (e.g. "capital of China")
     if not is_valuation_query:
         try:
             resp = client.chat.completions.create(
@@ -264,7 +259,6 @@ def run_analyst_agent(
         except Exception as e:
             return f"Error: {e}", None, None, time.perf_counter() - start_time
 
-    # 2. Valuation pipeline with tool execution
     generated_plot = None
     generated_excel = None
     tool_outputs = []
@@ -299,7 +293,6 @@ def run_analyst_agent(
     except Exception:
         pass
 
-    # 3. Guaranteed Quantitative Fallback: executes if sandbox outputs were incomplete
     if not generated_plot or not generated_excel or not tool_outputs:
         if status_callback:
             status_callback("info", "Executing deterministic quantitative engine...")
@@ -308,7 +301,6 @@ def run_analyst_agent(
         generated_excel = excel_bytes
         tool_outputs.append(f"Calculation Data:\n{calc_data}")
 
-    # 4. Final Executive Synthesis Briefing
     if status_callback:
         status_callback("info", "Generating executive valuation briefing...")
 
@@ -338,7 +330,7 @@ def run_analyst_agent(
         )
         raw_text = synth.choices[0].message.content or combined_results
         final_text = sanitize_report_formatting(raw_text)
-    except Exception:
+    except Exception as e:
         final_text = sanitize_report_formatting(f"### 📊 Valuation Analysis Completed\n\n{combined_results}")
 
     elapsed = time.perf_counter() - start_time
