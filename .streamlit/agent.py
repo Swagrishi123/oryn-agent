@@ -409,7 +409,7 @@ def generate_deterministic_dcf_artifacts(user_input: str) -> tuple[str, bytes | 
         f"### 📊 Institutional DCF Valuation Schedule\n\n"
         f"**Implied Enterprise Value:** **USD {ev:.2f}M**\n\n"
         f"{table_md}\n\n"
-        f"* **Model Assumptions:** Year-1 Rev: USD {rev[0]:.2f}M | Growth: {growth:.1%} | Margin: {margin:.1%} | WACC: {wacc:.1%} | Terminal Rate: {tv_rate:.1%}\n"
+        f"* **Model Assumptions:** Year-1 Rev: USD {rev[0]:.2f}M • Growth: {growth:.1%} • Margin: {margin:.1%} • WACC: {wacc:.1%} • Terminal Rate: {tv_rate:.1%}\n"
         f"* **Cumulative PV of Cash Flows:** USD {sum_pv_ufcf:.2f}M\n"
         f"* **Terminal Value (TV):** USD {tv:.2f}M\n"
         f"* **Present Value of TV:** USD {pv_tv:.2f}M\n"
