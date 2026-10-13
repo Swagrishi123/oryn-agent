@@ -37,27 +37,31 @@ FINANCIAL_ACRONYMS_BLACKLIST = {
 
 SYSTEM_PROMPT = (
     "You are ORYN Analyst, an elite institutional BFSI quantitative analyst and corporate intelligence advisor.\n\n"
-    "CRITICAL CONTEXT & DATA FRESHNESS PROTOCOL:\n"
-    "1. PROVENANCE & DATES: When reporting corporate leadership, board executives, or regulatory officeholders, "
-    "ALWAYS prioritize recent date-stamped regulatory disclosures and appointment announcements over static encyclopedic summaries.\n"
-    "2. CORPORATE RESTRUCTURING: If a firm phased out the title 'Chairman' in favor of 'CEO & MD' (such as LIC), "
-    "explicitly state the current executive head (CEO & MD) and mention their appointment/effective date. Never present a former incumbent as active.\n"
-    "3. MARKET DATA GATING: Only include stock price and market capitalization tables if the user specifically requested stock, share, or market pricing metrics.\n\n"
+    "CRITICAL EXECUTIVE BRIEFING PROTOCOL:\n"
+    "1. NO TAG LEAKAGE: NEVER echo or output bracketed system tags (such as [OFFICIAL APPOINTMENTS...], "
+    "[RECENT REGULATORY...], or [VERIFIED RESEARCH...]). Synthesize facts directly into your briefing.\n"
+    "2. NO CHATBOT HEDGING OR BOILERPLATE: Never use generic conversational fluff (e.g., 'Based on the available data', "
+    "'Please note that for the most accurate information...', 'I recommend referring to official sources', 'Feel free to ask'). "
+    "Deliver crisp, decisive executive intelligence.\n"
+    "3. EXECUTIVE LEADERSHIP STRUCTURE:\n"
+    "   - Always distinguish between the top executive (Chairman or CEO/MD) and subordinate Managing Directors (MDs).\n"
+    "   - State the current incumbent's full name, designation, tenure start, and key background in a structured Markdown table or clean bullet points.\n"
+    "   - For State Bank of India (SBI): The top executive is the Chairman (Challa Sreenivasulu Setty / C.S. Setty), supported by 4 Managing Directors.\n"
+    "   - For LIC: The top executive is designated CEO & MD (R. Doraiswamy).\n"
+    "4. MARKET DATA GATING: Only include stock price and market capitalization tables if the user specifically asked for equity prices, valuation, or market quotes.\n\n"
     "CRITICAL FORMATTING & TABLE RULES (IMMUNITY TO KATEX COLLAPSE):\n"
     "1. DIRECT STRUCTURAL DELIVERY: Eliminate introductory pleasantries. Begin directly with the analysis header.\n"
     "2. NO DOLLAR SIGNS IN TABLES: NEVER use '$' inside table cells or column headers. "
-    "State currency in headers as 'USD M' or 'INR' (e.g., | Year | Revenue (USD M) | EBITDA (USD M) |). "
-    "Cell values MUST be pure numbers (e.g., | 1 | 60.00 | 15.00 |).\n"
+    "State currency in headers as 'USD M' or 'INR'. Cell values MUST be pure numbers.\n"
     "3. STRICT MARKDOWN TABLE SYNTAX: Every table row MUST start and end with a pipe (|). "
     "Always place the divider row (| :--- | :--- |) immediately below the header row. Never output raw HTML table tags.\n\n"
     "FINANCIAL REASONING & WATERFALL PROTOCOLS:\n"
     "1. CHAPTER 11 RESTRUCTURING WATERFALL:\n"
     "   - Calculate claims strictly in linear sequence: DIP -> First Lien -> Second Lien -> Senior Unsecured -> Subordinated.\n"
-    "   - Present the distribution in ONE unified Markdown table. Never debate or recalculate the table in subsequent text.\n"
-    "   - The fulcrum security is the tranche that receives a partial recovery.\n"
+    "   - Present the distribution in ONE unified Markdown table. The fulcrum security is the tranche that receives a partial recovery.\n"
     "2. FIG & ALM BANKING DYNAMICS:\n"
     "   - A policy rate cut on an asset-sensitive bank causes Net Interest Margin (NIM) COMPRESSION because floating assets reprice down faster than liabilities.\n"
-    "   - High deposit beta cushions NIM compression (deposit costs drop quickly). Low deposit beta causes severe NIM compression.\n"
+    "   - High deposit beta cushions NIM compression; low deposit beta causes severe NIM compression.\n"
     "   - Falling benchmark yields increase bond prices, reversing unrealized losses in Available-For-Sale (AFS) portfolios, which directly EXPANDS Tangible Common Equity (TCE).\n"
     "3. DCF MODELING: Execute quantitative schedules, render matplotlib artifacts, and write 'model.xlsx'."
 )
@@ -65,6 +69,8 @@ SYSTEM_PROMPT = (
 CACHED_WORKING_MODEL = None
 
 KNOWN_ENTITIES = {
+    "sbi": "SBIN",
+    "state bank of india": "SBIN",
     "lic": "LICI",
     "lici": "LICI",
     "life insurance corporation": "LICI",
@@ -77,8 +83,6 @@ KNOWN_ENTITIES = {
     "hdfc bank": "HDFCBANK",
     "icici": "ICICIBANK",
     "icici bank": "ICICIBANK",
-    "sbi": "SBIN",
-    "state bank of india": "SBIN",
     "tata motors": "TATAMOTORS",
     "itc": "ITC",
     "wipro": "WIPRO",
@@ -95,7 +99,6 @@ def extract_and_fetch_live_data(prompt: str, status_callback=None) -> str:
     injected_context = []
     p_lower = prompt.lower()
 
-    # 1. Intent-Gated Equity Discovery: ONLY search stocks if user asks about equity/pricing metrics
     stock_keywords = [
         "stock", "share", "shares", "price", "market cap", "valuation",
         "52-week", "quote", "ticker", "trading at", "pe ratio", "dividend",
@@ -150,11 +153,9 @@ def extract_and_fetch_live_data(prompt: str, status_callback=None) -> str:
 
         if market_rows:
             injected_context.append(
-                "[VERIFIED LIVE EXCHANGE DATA - USE IN TABLE]:\n" + 
-                "\n".join(market_rows)
+                "[VERIFIED LIVE EXCHANGE DATA]:\n" + "\n".join(market_rows)
             )
 
-    # 2. General Knowledge / Leadership / Corporate Intelligence Research
     is_pure_stock_quote = bool(target_tickers) and is_stock_request
     if not is_pure_stock_quote:
         if not any(w in p_lower for w in ["dcf", "discounted cash flow", "wacc", "waterfall", "restructuring"]):
@@ -171,8 +172,10 @@ def extract_and_fetch_live_data(prompt: str, status_callback=None) -> str:
     return ""
 
 def sanitize_report_formatting(text: str) -> str:
-    """Repairs tables, strips list prefixes, and immunizes output against KaTeX math mode."""
-    cleaned = re.sub(r'```(?:python)?\s*[\s\S]*?```', '', text)
+    """Repairs tables, purges leaked backend prompt tags, and immunizes against KaTeX crashes."""
+    # 1. Purge accidental leaks of backend prompt tags
+    cleaned = re.sub(r'\[(?:OFFICIAL APPOINTMENTS|RECENT REGULATORY|VERIFIED RESEARCH|VERIFIED LIVE)[\s\S]*?\]:?', '', text)
+    cleaned = re.sub(r'```(?:python)?\s*[\s\S]*?```', '', cleaned)
     cleaned = re.sub(r'\|\s*\|', '|\n|', cleaned)
 
     lines = cleaned.split('\n')
@@ -325,11 +328,9 @@ def parse_dcf_assumptions(prompt: str) -> dict:
     """Parses dynamic DCF parameters from conversational input with fallback defaults."""
     p_lower = prompt.lower()
     
-    # 1. Growth rate (default 20%)
     growth_match = re.search(r'(?:growing|growth rate|revenue growth|growth)[\s:]*(?:at\s*)?([0-9.]+)%', p_lower)
     growth = float(growth_match.group(1)) / 100.0 if growth_match else 0.20
 
-    # 2. Revenue Parsing
     y1_num = None
     m1 = re.search(r'([0-9.]+)\s*(?:m|million)?\s*(?:revenue\s+)?in\s+year[\s-]*1', p_lower)
     m2 = re.search(r'rev(?:enue)?[\s:]*(?:usd|\$)?\s*([0-9.]+)\s*(?:m|million)?\s+in\s+year[\s-]*1', p_lower)
@@ -355,15 +356,12 @@ def parse_dcf_assumptions(prompt: str) -> dict:
         else:
             base_revenue = 50.0
 
-    # 3. EBITDA Margin
     margin_match = re.search(r'(?:ebitda margin|margin|ebitda)[\s:]*(?:apparently\s*)?([0-9.]+)%', p_lower)
     margin = float(margin_match.group(1)) / 100.0 if margin_match else 0.25
 
-    # 4. WACC / Discount Rate
     wacc_match = re.search(r'(?:wacc|discount rate|cost of capital)[\s:]*(?:apparently\s*)?([0-9.]+)%', p_lower)
     wacc = float(wacc_match.group(1)) / 100.0 if wacc_match else 0.10
 
-    # 5. Terminal Growth Rate
     tv_match = re.search(r'(?:terminal growth|terminal rate|perpetual growth)[\s:]*(?:apparently\s*)?([0-9.]+)%', p_lower)
     tv_rate = float(tv_match.group(1)) / 100.0 if tv_match else 0.025
 
