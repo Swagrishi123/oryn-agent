@@ -52,7 +52,7 @@ SYSTEM_PROMPT = (
     "CRITICAL FORMATTING & TABLE RULES (IMMUNITY TO KATEX COLLAPSE):\n"
     "1. DIRECT STRUCTURAL DELIVERY: Eliminate introductory pleasantries. Begin directly with the analysis header.\n"
     "2. NO DOLLAR SIGNS IN TABLES: NEVER use '$' inside table cells or column headers. "
-    "State currency in headers as 'USD M' or 'INR'. Cell values MUST be pure numbers.\n"
+    "State currency in headers as 'USD M', 'bps', or 'INR'. Cell values MUST be pure numbers.\n"
     "3. STRICT MARKDOWN TABLE SYNTAX: Every table row MUST start and end with a pipe (|). "
     "Always place the divider row (| :--- | :--- |) immediately below the header row. Never output raw HTML table tags.\n\n"
     "FINANCIAL REASONING & WATERFALL PROTOCOLS:\n"
@@ -60,9 +60,12 @@ SYSTEM_PROMPT = (
     "   - Calculate claims strictly in linear sequence: DIP -> First Lien -> Second Lien -> Senior Unsecured -> Subordinated.\n"
     "   - Present the distribution in ONE unified Markdown table. The fulcrum security is the tranche that receives a partial recovery.\n"
     "2. FIG & ALM BANKING DYNAMICS:\n"
+    "   - Structure response into two clear sections:\n"
+    "     Section 1: Net Interest Margin (NIM) Transmission (include a comparative Markdown table with columns: Regime, Deposit Beta, Asset Beta, Asset Yield Change, Liability Cost Change, Net NIM Impact).\n"
+    "     Section 2: AFS Portfolio & Tangible Common Equity (TCE) Dynamics (explain bond price appreciation, AOCI reversal, and direct TCE expansion).\n"
     "   - A policy rate cut on an asset-sensitive bank causes Net Interest Margin (NIM) COMPRESSION because floating assets reprice down faster than liabilities.\n"
-    "   - High deposit beta cushions NIM compression; low deposit beta causes severe NIM compression.\n"
-    "   - Falling benchmark yields increase bond prices, reversing unrealized losses in Available-For-Sale (AFS) portfolios, which directly EXPANDS Tangible Common Equity (TCE).\n"
+    "   - High deposit beta cushions NIM compression (deposit costs drop quickly). Low deposit beta causes severe NIM compression (deposit costs remain sticky).\n"
+    "   - Falling benchmark yields increase bond prices, reversing unrealized losses in Available-For-Sale (AFS) portfolios, which directly EXPANDS Tangible Common Equity (TCE) via Accumulated Other Comprehensive Income (AOCI).\n"
     "3. DCF MODELING: Execute quantitative schedules, render matplotlib artifacts, and write 'model.xlsx'."
 )
 
@@ -158,7 +161,15 @@ def extract_and_fetch_live_data(prompt: str, status_callback=None) -> str:
 
     is_pure_stock_quote = bool(target_tickers) and is_stock_request
     if not is_pure_stock_quote:
-        if not any(w in p_lower for w in ["dcf", "discounted cash flow", "wacc", "waterfall", "restructuring"]):
+        # Bypasses web search for theoretical financial analysis, waterfalls, DCFs, and ALM banking mechanics
+        theory_bypass_terms = [
+            "dcf", "discounted cash flow", "wacc", "waterfall", "restructuring",
+            "alm", "nim", "deposit beta", "rate cut", "rate hike", "bps",
+            "afs", "tce", "tangible common equity", "asset-sensitive", "fulcrum"
+        ]
+        is_pure_theory = any(w in p_lower for w in theory_bypass_terms)
+        
+        if not is_pure_theory:
             if status_callback:
                 status_callback("info", "Autonomous research: retrieving verified records...")
             scraped_intel = dynamic_web_search(prompt)
@@ -173,7 +184,6 @@ def extract_and_fetch_live_data(prompt: str, status_callback=None) -> str:
 
 def sanitize_report_formatting(text: str) -> str:
     """Repairs tables, purges leaked backend prompt tags, and immunizes against KaTeX crashes."""
-    # 1. Purge accidental leaks of backend prompt tags
     cleaned = re.sub(r'\[(?:OFFICIAL APPOINTMENTS|RECENT REGULATORY|VERIFIED RESEARCH|VERIFIED LIVE)[\s\S]*?\]:?', '', text)
     cleaned = re.sub(r'```(?:python)?\s*[\s\S]*?```', '', cleaned)
     cleaned = re.sub(r'\|\s*\|', '|\n|', cleaned)
@@ -277,7 +287,8 @@ def create_completion_with_fallback(client: Groq, preferred_model: str = None, s
     global CACHED_WORKING_MODEL
     active_model = preferred_model or get_best_available_model(client)
     
-    kwargs["max_tokens"] = min(kwargs.get("max_tokens", 800), 800)
+    # Allows larger outputs (up to 1800 tokens) so institutional analyses never get cut off
+    kwargs["max_tokens"] = kwargs.get("max_tokens", 1800)
     kwargs["temperature"] = kwargs.get("temperature", 0.1)
     kwargs["frequency_penalty"] = 0.15
     kwargs["presence_penalty"] = 0.1
@@ -289,8 +300,8 @@ def create_completion_with_fallback(client: Groq, preferred_model: str = None, s
         err_str = str(e).lower()
 
         if any(term in err_str for term in ["output tokens per minute", "otpm", "reduce max_tokens", "rate_limit_exceeded"]):
-            if kwargs["max_tokens"] > 500:
-                kwargs["max_tokens"] = 500
+            if kwargs["max_tokens"] > 800:
+                kwargs["max_tokens"] = 800
                 if status_callback:
                     status_callback("info", "Adjusting output budget to fit tier quota... retrying.")
                 return client.chat.completions.create(**kwargs)
@@ -430,7 +441,7 @@ def generate_deterministic_dcf_artifacts(user_input: str) -> tuple[str, bytes | 
         f"### 📊 Institutional DCF Valuation Schedule\n\n"
         f"**Implied Enterprise Value:** **USD {ev:.2f}M**\n\n"
         f"{table_md}\n\n"
-        f"* **Model Assumptions:** Year-1 Rev: USD {rev[0]:.2f}M • Growth: {growth:.1%} • Margin: {margin:.1%} • WACC: {wacc:.1%} • Terminal Rate: {tv_rate:.1%}\n"
+        f"* **Model Assumptions:** Year-1 Rev: USD {rev[0]:.2f}M • Growth: {growth:.1%} • Margin: {margin:.1%} • WACC: {wacc:.1%} • Terminal Rate: {tv_rate:.2%}\n"
         f"* **Cumulative PV of Cash Flows:** USD {sum_pv_ufcf:.2f}M\n"
         f"* **Terminal Value (TV):** USD {tv:.2f}M\n"
         f"* **Present Value of TV:** USD {pv_tv:.2f}M\n"
@@ -470,7 +481,7 @@ def run_analyst_agent(
             preferred_model=selected_model,
             status_callback=status_callback,
             messages=messages,
-            max_tokens=800
+            max_tokens=1800
         )
         final_text = resp.choices[0].message.content or ""
         elapsed = time.perf_counter() - start_time
