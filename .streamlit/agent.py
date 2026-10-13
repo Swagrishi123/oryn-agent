@@ -14,13 +14,15 @@ SYSTEM_PROMPT = (
     "You are ORYN Analyst, an institutional BFSI quantitative analyst and equity research specialist.\n"
     "CORE RULES:\n"
     "1. Respond naturally in the language used by the user.\n"
-    "2. For general knowledge, business history, competitive analysis, or equity research questions "
-    "(e.g., 'Who is Abraham Lincoln?', 'Who is the governor of RBI?', 'Compare MSFT and GOOGL moats'), "
-    "deliver an exhaustive, structured, institutional research brief in clear Markdown text. Do NOT emit placeholder DCF tables.\n"
-    "3. When creating Markdown comparison tables, always use standard Markdown syntax with pipes and dashed separators (| Metric | Value |).\n"
-    "4. For valuation and DCF modeling requests, execute python_interpreter or generate full quantitative schedules, "
-    "render a matplotlib chart, and write 'model.xlsx'.\n"
-    "5. Format currency values cleanly as '$346M' or '346 million USD' without awkward backticks."
+    "2. CONVERSATIONAL MEMORY & CONTEXT: Always maintain continuity with the ongoing conversation. "
+    "Resolve pronouns (e.g., 'he', 'she', 'they', 'his changes') using preceding conversation turns.\n"
+    "3. FACTUAL INTEGRITY & ZERO HALLUCINATION: Never invent or fabricate personal biographies, "
+    "corporate executive positions, regulatory appointments, or fictitious names. "
+    "If a recent appointment, fact, or policy detail is outside confirmed public records, "
+    "state verified historical facts objectively without fabricating synthetic personas or timelines.\n"
+    "4. When creating comparison tables, always use standard Markdown syntax with pipes and dashed separators (| Metric | Value |).\n"
+    "5. For valuation and DCF modeling requests, execute quantitative schedules, render a matplotlib chart, and write 'model.xlsx'.\n"
+    "6. Format currency values cleanly as '$346M' or '346 million USD' without awkward backticks."
 )
 
 CACHED_WORKING_MODEL = None
@@ -143,7 +145,7 @@ def get_best_available_model(client: Groq, force_refresh: bool = False) -> str:
     raise RuntimeError(f"Could not connect to any active Groq text model. Available IDs: [{avail_str}]")
 
 def create_completion_with_fallback(client: Groq, preferred_model: str = None, status_callback=None, **kwargs):
-    """Executes Groq completions with automatic failover for 400/404 and 429 OTPM token limits."""
+    """Executes Groq completions with temperature control and automatic failover for 400/404/429 limits."""
     global CACHED_WORKING_MODEL
     
     filter_out = ["guard", "safeguard", "orpheus", "whisper", "allam", "arabic"]
@@ -152,11 +154,15 @@ def create_completion_with_fallback(client: Groq, preferred_model: str = None, s
     else:
         active_model = get_best_available_model(client)
         
-    # Enforce a safe upper ceiling on max_tokens to prevent exceeding Groq's 1000 OTPM limit
+    # Safe ceiling on output tokens to stay comfortably within Groq OTPM limit
     if "max_tokens" in kwargs:
         kwargs["max_tokens"] = min(kwargs["max_tokens"], 800)
     else:
         kwargs["max_tokens"] = 800
+
+    # Low temperature prevents generative hallucinations / fake names
+    if "temperature" not in kwargs:
+        kwargs["temperature"] = 0.1
 
     kwargs["model"] = active_model
 
@@ -165,10 +171,10 @@ def create_completion_with_fallback(client: Groq, preferred_model: str = None, s
     except Exception as e:
         err_str = str(e).lower()
         
-        # Scenario 1: Token limit exceeded (429 OTPM rate limit) -> auto-clamp tokens and retry
+        # Scenario 1: Token rate limit (429 OTPM) -> Reduce token ceiling and retry
         if "429" in err_str or "rate_limit_exceeded" in err_str or "output tokens per minute" in err_str:
             if status_callback:
-                status_callback("info", "Rate limit token cap detected. Auto-adjusting response token limit...")
+                status_callback("info", "Rate limit detected. Auto-adjusting response token limit...")
             kwargs["max_tokens"] = 450
             try:
                 return client.chat.completions.create(**kwargs)
@@ -178,7 +184,7 @@ def create_completion_with_fallback(client: Groq, preferred_model: str = None, s
                 kwargs["max_tokens"] = 400
                 return client.chat.completions.create(**kwargs)
 
-        # Scenario 2: Model decommissioned or access issue (404 / 400)
+        # Scenario 2: Model not found / access error (404 / 400)
         if "404" in err_str or "model_not_found" in err_str or "decommissioned" in err_str or "400" in err_str or "access" in err_str:
             if status_callback:
                 status_callback("info", f"Model `{active_model}` not accessible. Auto-switching to working model...")
@@ -187,6 +193,30 @@ def create_completion_with_fallback(client: Groq, preferred_model: str = None, s
             return client.chat.completions.create(**kwargs)
             
         raise e
+
+def build_contextual_messages(user_input: str, system_prompt: str, max_turns: int = 3) -> list[dict]:
+    """Retrieves recent conversation turns from Streamlit session state to preserve multi-turn context."""
+    history = []
+    try:
+        import streamlit as st
+        if "messages" in st.session_state and isinstance(st.session_state.messages, list):
+            candidates = st.session_state.messages[:]
+            if candidates and candidates[-1].get("content") == user_input:
+                candidates = candidates[:-1]
+            
+            recent = candidates[-(max_turns * 2):]
+            for m in recent:
+                role = m.get("role", "user")
+                content = m.get("content", "")
+                if role in ["user", "assistant"] and content:
+                    # Truncate older assistant turns to keep prompt token size compact
+                    if role == "assistant" and len(content) > 300:
+                        content = content[:300] + "..."
+                    history.append({"role": role, "content": str(content)})
+    except Exception:
+        pass
+
+    return [{"role": "system", "content": system_prompt}] + history + [{"role": "user", "content": user_input}]
 
 def parse_prompt_financial_parameters(prompt: str) -> tuple[float, float, float, float, float, int]:
     p = prompt.lower()
@@ -199,13 +229,13 @@ def parse_prompt_financial_parameters(prompt: str) -> tuple[float, float, float,
     growth_match = re.search(r'(\d+(?:\.\d+)?)\s*%\s*(?:annual\s*)?growth', p)
     growth = float(growth_match.group(1)) / 100.0 if growth_match else 0.20
 
-    margin_match = re.search(r'(\d+(?:\.\d+)?)\s*%\s*ebitda', p)
+    margin_match = re.search(r'(\\d+(?:\\.\\d+)?)\\s*%\\s*ebitda', p)
     margin = float(margin_match.group(1)) / 100.0 if margin_match else 0.25
 
-    wacc_match = re.search(r'(\d+(?:\.\d+)?)\s*%\s*wacc', p)
+    wacc_match = re.search(r'(\\d+(?:\\.\\d+)?)\\s*%\\s*wacc', p)
     wacc = float(wacc_match.group(1)) / 100.0 if wacc_match else 0.10
 
-    tg_match = re.search(r'(\d+(?:\.\d+)?)\s*%\s*terminal\s*(?:growth)?', p)
+    tg_match = re.search(r'(\\d+(?:\\.\\d+)?)\\s*%\\s*terminal\\s*(?:growth)?', p)
     tg = float(tg_match.group(1)) / 100.0 if tg_match else 0.025
 
     return base_rev, growth, margin, wacc, tg, 5
@@ -366,15 +396,14 @@ def run_analyst_agent(
     # Branch 1: General knowledge, business analysis, equity research memos
     if not is_dcf_calc:
         try:
+            messages = build_contextual_messages(user_input, SYSTEM_PROMPT, max_turns=3)
             resp = create_completion_with_fallback(
                 client=client,
                 preferred_model=selected_model,
                 status_callback=status_callback,
-                messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": user_input}
-                ],
-                max_tokens=800
+                messages=messages,
+                max_tokens=800,
+                temperature=0.1
             )
             elapsed = time.perf_counter() - start_time
             content = resp.choices[0].message.content or ""
@@ -391,17 +420,16 @@ def run_analyst_agent(
         status_callback("info", "Executing quantitative model in sandbox...")
 
     try:
+        messages = build_contextual_messages(user_input, SYSTEM_PROMPT, max_turns=2)
         response = create_completion_with_fallback(
             client=client,
             preferred_model=selected_model,
             status_callback=status_callback,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": user_input}
-            ],
+            messages=messages,
             tools=AGENT_TOOLS,
             tool_choice="auto",
-            max_tokens=800
+            max_tokens=800,
+            temperature=0.1
         )
         msg = response.choices[0].message
         if getattr(msg, "tool_calls", None):
