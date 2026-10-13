@@ -1,13 +1,14 @@
 import json
+import requests
 import yfinance as yf
 
-# Schemas telling Groq what tools exist
+# Tool schemas registered with Groq
 AGENT_TOOLS = [
     {
         "type": "function",
         "function": {
             "name": "get_financial_data",
-            "description": "Fetch real-time stock price, P/E ratio, market cap, and EBITDA for any Indian (NSE/BSE) or global stock ticker.",
+            "description": "Fetch verified real-time stock price, 52-week range, market cap, and valuation metrics for NSE/BSE or global equities.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -23,59 +24,92 @@ AGENT_TOOLS = [
 ]
 
 def tool_get_financial_data(ticker: str) -> dict:
-    """Fetches real-time price, market cap, and valuation metrics for Indian and global equities."""
-    clean_ticker = ticker.strip().upper().replace("$", "")
-    
-    # Priority order: As provided -> NSE (.NS) -> BSE (.BO)
-    candidates = [clean_ticker]
-    if not clean_ticker.endswith((".NS", ".BO")):
-        candidates.append(f"{clean_ticker}.NS")
-        candidates.append(f"{clean_ticker}.BO")
+    """Fetches verified live price, 52w range, and market cap without 401 crumb errors."""
+    clean_sym = ticker.strip().upper().replace("$", "")
+    candidates = [clean_sym]
+    if not clean_sym.endswith((".NS", ".BO")):
+        candidates.append(f"{clean_sym}.NS")
+        candidates.append(f"{clean_sym}.BO")
 
-    data = None
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+
+    price = 0.0
+    mcap = 0
+    pe = "N/A"
+    high_52 = "N/A"
+    low_52 = "N/A"
+    curr = "INR"
     resolved_sym = None
+    company_name = clean_sym
 
     for sym in candidates:
         try:
-            tk = yf.Ticker(sym)
-            info = tk.info
-            # Validate that real data came back
-            if info and ("currentPrice" in info or "regularMarketPrice" in info):
-                data = info
-                resolved_sym = sym
-                break
+            # 1. Fetch live market price & 52w range directly (bypasses 401 crumb block)
+            chart_url = f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}?interval=1d&range=1d"
+            res = requests.get(chart_url, headers=headers, timeout=5)
+            if res.status_code == 200:
+                data = res.json()
+                meta = data.get("chart", {}).get("result", [{}])[0].get("meta", {})
+                if meta and "regularMarketPrice" in meta:
+                    price = float(meta.get("regularMarketPrice") or 0.0)
+                    high_52 = meta.get("fiftyTwoWeekHigh", "N/A")
+                    low_52 = meta.get("fiftyTwoWeekLow", "N/A")
+                    curr = meta.get("currency", "INR")
+                    resolved_sym = sym
+                    company_name = meta.get("symbol", sym)
+                    break
         except Exception:
             continue
 
-    if not data or not resolved_sym:
-        return {"error": f"Could not find live market data for ticker '{ticker}' on NSE, BSE, or global exchanges."}
+    # 2. Extract market cap & valuation metrics via fast_info
+    if resolved_sym:
+        try:
+            tk = yf.Ticker(resolved_sym)
+            fi = tk.fast_info
+            mcap = getattr(fi, "market_cap", 0) or 0
+            if not price:
+                price = getattr(fi, "last_price", 0.0) or 0.0
+            if high_52 == "N/A":
+                high_52 = getattr(fi, "year_high", "N/A")
+            if low_52 == "N/A":
+                low_52 = getattr(fi, "year_low", "N/A")
+        except Exception:
+            pass
 
-    curr = data.get("currency", "INR" if (".NS" in resolved_sym or ".BO" in resolved_sym) else "USD")
-    price = data.get("currentPrice") or data.get("regularMarketPrice") or 0.0
-    mcap = data.get("marketCap", 0)
-    ebitda = data.get("ebitda", 0)
-    pe = data.get("trailingPE") or data.get("forwardPE") or "N/A"
+        try:
+            tk = yf.Ticker(resolved_sym)
+            t_pe = tk.info.get("trailingPE") or tk.info.get("forwardPE")
+            if t_pe:
+                pe = round(float(t_pe), 2)
+        except Exception:
+            pass
 
-    # Format market cap and EBITDA in Crores for Indian stocks, or Billions for US stocks
-    if curr == "INR":
-        mcap_formatted = f"₹{mcap / 1e7:,.2f} Cr" if mcap else "N/A"
-        ebitda_formatted = f"₹{ebitda / 1e7:,.2f} Cr" if ebitda else "N/A"
-        price_formatted = f"₹{price:,.2f}"
+    if not resolved_sym or price == 0.0:
+        return {"error": f"Symbol '{ticker}' could not be resolved on NSE, BSE, or global exchanges."}
+
+    # Format output for Indian Rupee (Crores) or USD (Billions)
+    if curr == "INR" or ".NS" in resolved_sym or ".BO" in resolved_sym:
+        mcap_fmt = f"₹{mcap / 1e7:,.2f} Cr" if mcap else "N/A"
+        price_fmt = f"₹{price:,.2f}"
+        high_fmt = f"₹{high_52:,.2f}" if isinstance(high_52, (int, float)) else str(high_52)
+        low_fmt = f"₹{low_52:,.2f}" if isinstance(low_52, (int, float)) else str(low_52)
     else:
-        mcap_formatted = f"${mcap / 1e9:,.2f}B" if mcap else "N/A"
-        ebitda_formatted = f"${ebitda / 1e9:,.2f}B" if ebitda else "N/A"
-        price_formatted = f"${price:,.2f}"
+        mcap_fmt = f"${mcap / 1e9:,.2f}B" if mcap else "N/A"
+        price_fmt = f"${price:,.2f}"
+        high_fmt = f"${high_52:,.2f}" if isinstance(high_52, (int, float)) else str(high_52)
+        low_fmt = f"${low_52:,.2f}" if isinstance(low_52, (int, float)) else str(low_52)
 
     return {
-        "company_name": data.get("longName", resolved_sym),
+        "company_name": company_name,
         "ticker_resolved": resolved_sym,
-        "current_price": price_formatted,
-        "market_cap": mcap_formatted,
-        "pe_ratio": round(pe, 2) if isinstance(pe, (int, float)) else pe,
-        "ebitda": ebitda_formatted,
-        "currency": curr,
-        "52w_high": data.get("fiftyTwoWeekHigh", "N/A"),
-        "52w_low": data.get("fiftyTwoWeekLow", "N/A")
+        "current_price": price_fmt,
+        "market_cap": mcap_fmt,
+        "pe_ratio": pe,
+        "52w_high": high_fmt,
+        "52w_low": low_fmt,
+        "currency": curr
     }
 
 def tool_web_search(query: str) -> str:
