@@ -10,7 +10,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from groq import Groq
 
-# Safely import functions from tools without crashing on cached modules
+# Safely import functions from tools with module reload protection
 try:
     if "tools" in sys.modules:
         importlib.reload(sys.modules["tools"])
@@ -23,7 +23,7 @@ except Exception:
     def fetch_institutional_officeholder_facts(x):
         return None
 
-# English words to ignore so all-caps query words are not treated as stock tickers
+# English words to prevent uppercase prompt words from being treated as tickers
 COMMON_ENGLISH_STOPWORDS = {
     "CAN", "YOU", "PULL", "UP", "LIVE", "MARKET", "DATA", "FOR", "AND", "SHOW",
     "THEIR", "IN", "CLEAN", "TABLE", "WHAT", "WHO", "IS", "THE", "GIVE", "GET",
@@ -91,7 +91,7 @@ def extract_and_fetch_live_data(prompt: str, status_callback=None) -> str:
     injected_context = []
     p_lower = prompt.lower()
 
-    # 1. Macro / Officeholder Check
+    # 1. Macro Officeholder Check
     macro_facts = fetch_institutional_officeholder_facts(prompt)
     if macro_facts:
         if status_callback:
@@ -172,7 +172,8 @@ def sanitize_report_formatting(text: str) -> str:
             output.append(line)
 
     res = '\n'.join(output)
-    res = re.sub(r'(?<!\\)\$', r'\$', res)
+    # Escapes raw dollar signs to prevent KaTeX table collapsing
+    res = re.sub(r'(?<!\\)\$', r'\\$', res)
     return re.sub(r'\n{3,}', '\n\n', res).strip()
 
 def is_quantitative_model_request(prompt: str) -> bool:
@@ -237,7 +238,6 @@ def create_completion_with_fallback(client: Groq, preferred_model: str = None, s
     global CACHED_WORKING_MODEL
     active_model = preferred_model or get_best_available_model(client)
     
-    # Strictly cap at 800 tokens to stay well below the 1,000 OTPM limit
     kwargs["max_tokens"] = min(kwargs.get("max_tokens", 800), 800)
     kwargs["temperature"] = kwargs.get("temperature", 0.1)
     kwargs["model"] = active_model
@@ -247,7 +247,7 @@ def create_completion_with_fallback(client: Groq, preferred_model: str = None, s
     except Exception as e:
         err_str = str(e).lower()
 
-        # Automatic recovery if OTPM or max_tokens is triggered
+        # OTPM rate limit recovery
         if any(term in err_str for term in ["output tokens per minute", "otpm", "reduce max_tokens", "rate_limit_exceeded"]):
             if kwargs["max_tokens"] > 500:
                 kwargs["max_tokens"] = 500
@@ -255,13 +255,11 @@ def create_completion_with_fallback(client: Groq, preferred_model: str = None, s
                     status_callback("info", "Adjusting output budget to fit tier quota... retrying.")
                 return client.chat.completions.create(**kwargs)
 
-        # Failover on 404/decommissioned model
         if any(term in err_str for term in ["404", "model_not_found", "decommissioned", "does not exist", "not have access"]):
             alt_model = get_best_available_model(client, exclude_model=active_model, force_refresh=True)
             kwargs["model"] = alt_model
             return client.chat.completions.create(**kwargs)
 
-        # Standard 429 delay pause
         if "429" in err_str:
             delay_match = re.search(r'try again in ([0-9.]+)s', err_str)
             sleep_sec = float(delay_match.group(1)) + 0.5 if delay_match else 2.5
@@ -300,9 +298,9 @@ def generate_deterministic_dcf_artifacts(user_input: str) -> tuple[str, bytes, b
 
     df_proj = pd.DataFrame({
         "Year": [str(y) for y in years_idx],
-        "Revenue ($M)": [f"${x:.2f}M" for x in rev],
-        "EBITDA ($M)": [f"${x:.2f}M" for x in ebitda],
-        "PV of UFCF ($M)": [f"${x:.2f}M" for x in pv_ufcf]
+        "Revenue (USD M)": [f"${x:.2f}M" for x in rev],
+        "EBITDA (USD M)": [f"${x:.2f}M" for x in ebitda],
+        "PV of UFCF (USD M)": [f"${x:.2f}M" for x in pv_ufcf]
     })
 
     fig, ax = plt.subplots(figsize=(8, 4))
@@ -323,7 +321,15 @@ def generate_deterministic_dcf_artifacts(user_input: str) -> tuple[str, bytes, b
     dividers = "| " + " | ".join(["---"] * len(df_proj.columns)) + " |"
     table_md = "\n".join([headers, dividers] + rows)
 
-    calc_briefing = f"### 📊 Institutional DCF Valuation Schedule\n\n**Implied Enterprise Value:** **${ev:.2f}M**\n\n{table_md}"
+    calc_briefing = (
+        f"### 📊 Institutional DCF Valuation Schedule\n\n"
+        f"**Implied Enterprise Value:** **${ev:.2f}M**\n\n"
+        f"{table_md}\n\n"
+        f"* **Cumulative PV of Cash Flows:** ${sum_pv_ufcf:.2f}M\n"
+        f"* **Terminal Value (TV):** ${tv:.2f}M\n"
+        f"* **Present Value of TV:** ${pv_tv:.2f}M\n"
+        f"* **Implied Enterprise Value (EV):** **${ev:.2f}M**"
+    )
     return calc_briefing, img_buf.getvalue(), excel_buf.getvalue()
 
 def run_analyst_agent(
