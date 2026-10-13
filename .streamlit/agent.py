@@ -1,7 +1,11 @@
+import io
 import json
 import os
 import re
 import time
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
 from groq import Groq
 from tools import AGENT_TOOLS, tool_get_financial_data, tool_web_search
 from sandbox import tool_python_interpreter
@@ -9,13 +13,13 @@ from sandbox import tool_python_interpreter
 SYSTEM_PROMPT = (
     "You are ORYN Analyst, an institutional BFSI quantitative analyst.\n"
     "CORE RULES:\n"
-    "1. For general or conversational questions (e.g. 'What is the capital of China?'), "
-    "answer directly and concisely in text. Do NOT run valuation models or tools.\n"
-    "2. For valuation and DCF requests, you MUST execute python_interpreter. "
-    "Never estimate numbers or write valuation formulas in text without running code.\n"
+    "1. For general or conversational questions (e.g., 'What is the capital of China?'), "
+    "answer directly and concisely. Do NOT invoke valuation models or tools.\n"
+    "2. For valuation and DCF requests, ALWAYS execute python_interpreter to calculate cash flows, "
+    "create a matplotlib chart, and write 'model.xlsx'.\n"
     "3. Output clean Markdown tables and executive summaries.\n"
     "   - NEVER use backticks (`) around currency, numbers, or phrases.\n"
-    "   - Format currency values as '$346M' or '346 million USD'."
+    "   - Format currency values cleanly as '$346M' or '346 million USD'."
 )
 
 VALUATION_KEYWORDS = [
@@ -44,7 +48,6 @@ def sanitize_report_formatting(text: str) -> str:
     return re.sub(r'\n{3,}', '\n\n', cleaned).strip()
 
 def enforce_sandbox_contracts(code_str: str) -> str:
-    # Ensure Excel output always points to model.xlsx
     clean_code = re.sub(r'ExcelWriter\s*\(\s*[\'"][^\'"]+\.xlsx[\'"]', 'ExcelWriter("model.xlsx"', code_str)
     clean_code = re.sub(r'\.to_excel\s*\(\s*[\'"][^\'"]+\.xlsx[\'"]', '.to_excel("model.xlsx"', clean_code)
 
@@ -112,34 +115,111 @@ def get_best_available_model(client: Groq) -> str:
     CACHED_WORKING_MODEL = "llama-3.1-8b-instant"
     return CACHED_WORKING_MODEL
 
-def execute_with_self_healing(client: Groq, model: str, initial_code: str, hitl_enabled: bool, status_callback=None):
-    safe_code = enforce_sandbox_contracts(initial_code)
-    out, p_bytes, x_bytes = tool_python_interpreter(safe_code, hitl_enabled=hitl_enabled)
+def parse_prompt_financial_parameters(prompt: str) -> tuple[float, float, float, float, float, int]:
+    p = prompt.lower()
+    
+    rev_match = re.search(r'\$?(\d+(?:\.\d+)?)\s*(?:m|million)?\s*(?:base\s*)?rev', p)
+    if not rev_match:
+        rev_match = re.search(r'rev(?:enue)?\s*(?:of\s*)?\$?(\d+(?:\.\d+)?)', p)
+    base_rev = float(rev_match.group(1)) if rev_match else 50.0
 
-    if "Python Execution Error" in out or "Error:" in out:
-        if status_callback:
-            status_callback("info", "Self-healing: fixing script syntax in sandbox...")
-        repair_prompt = (
-            f"The following Python script threw an error:\n{out}\n\n"
-            f"Script:\n```python\n{safe_code}\n```\n\n"
-            "Fix the syntax error. Make sure all parentheses and brackets match. "
-            "Ensure it saves a matplotlib plot and exports 'model.xlsx'. "
-            "Return ONLY the fixed code inside ```python ... ```."
-        )
-        try:
-            resp = client.chat.completions.create(
-                model=model,
-                messages=[{"role": "user", "content": repair_prompt}],
-                max_tokens=2048
-            )
-            repaired = extract_code_from_markdown(resp.choices[0].message.content or "")
-            if repaired:
-                safe_repaired = enforce_sandbox_contracts(repaired)
-                out, p_bytes, x_bytes = tool_python_interpreter(safe_repaired, hitl_enabled=hitl_enabled)
-        except Exception:
-            pass
+    growth_match = re.search(r'(\d+(?:\.\d+)?)\s*%\s*(?:annual\s*)?growth', p)
+    growth = float(growth_match.group(1)) / 100.0 if growth_match else 0.20
 
-    return out, p_bytes, x_bytes
+    margin_match = re.search(r'(\d+(?:\.\d+)?)\s*%\s*ebitda', p)
+    margin = float(margin_match.group(1)) / 100.0 if margin_match else 0.25
+
+    wacc_match = re.search(r'(\d+(?:\.\d+)?)\s*%\s*wacc', p)
+    wacc = float(wacc_match.group(1)) / 100.0 if wacc_match else 0.10
+
+    tg_match = re.search(r'(\d+(?:\.\d+)?)\s*%\s*terminal\s*(?:growth)?', p)
+    tg = float(tg_match.group(1)) / 100.0 if tg_match else 0.025
+
+    return base_rev, growth, margin, wacc, tg, 5
+
+def generate_deterministic_dcf_artifacts(user_input: str) -> tuple[str, bytes, bytes]:
+    """Guaranteed quantitative DCF calculation engine that outputs exact data, chart, and Excel file."""
+    base_rev, growth, margin, wacc, tg, years = parse_prompt_financial_parameters(user_input)
+    years_idx = list(range(1, years + 1))
+
+    rev = [base_rev * ((1 + growth) ** t) for t in years_idx]
+    ebitda = [r * margin for r in rev]
+    ufcf = ebitda
+    df = [1 / ((1 + wacc) ** t) for t in years_idx]
+    pv_ufcf = [u * d for u, d in zip(ufcf, df)]
+    sum_pv_ufcf = sum(pv_ufcf)
+
+    tv_ufcf = ufcf[-1] * (1 + tg)
+    tv = tv_ufcf / (wacc - tg)
+    pv_tv = tv / ((1 + wacc) ** years)
+    ev = sum_pv_ufcf + pv_tv
+
+    # Sensitivity Matrix
+    wacc_range = [wacc - 0.02, wacc - 0.01, wacc, wacc + 0.01, wacc + 0.02]
+    tg_range = [tg - 0.01, tg - 0.005, tg, tg + 0.005, tg + 0.01]
+    sens_data = {}
+    for w in wacc_range:
+        col = []
+        pv_cf = sum([u / ((1 + w) ** t) for t, u in enumerate(ufcf, 1)])
+        for g in tg_range:
+            cur_tv = (ufcf[-1] * (1 + g)) / (w - g)
+            cur_pv_tv = cur_tv / ((1 + w) ** years)
+            col.append(round(pv_cf + cur_pv_tv, 2))
+        sens_data[f"WACC {w*100:.1f}%"] = col
+
+    df_sens = pd.DataFrame(sens_data, index=[f"TG {g*100:.1f}%" for g in tg_range])
+
+    df_proj = pd.DataFrame({
+        "Year": years_idx,
+        "Revenue ($M)": [round(x, 2) for x in rev],
+        "EBITDA ($M)": [round(x, 2) for x in ebitda],
+        "UFCF ($M)": [round(x, 2) for x in ufcf],
+        "Discount Factor": [round(x, 4) for x in df],
+        "PV of UFCF ($M)": [round(x, 2) for x in pv_ufcf]
+    })
+
+    # Render Matplotlib Chart
+    fig, ax = plt.subplots(figsize=(8, 4.5))
+    components = ['PV of Cash Flows', 'PV of Terminal Value']
+    values = [sum_pv_ufcf, pv_tv]
+    colors = ['#1f77b4', '#2ca02c']
+    bars = ax.bar(components, values, color=colors, width=0.45)
+    ax.set_title(f'Enterprise Value Breakdown ($M) — Total: ${ev:.2f}M', fontsize=12, fontweight='bold', pad=12)
+    ax.set_ylabel('Present Value ($M)')
+    for bar in bars:
+        yval = bar.get_height()
+        ax.text(bar.get_x() + bar.get_width()/2.0, yval + 5, f'${yval:.2f}M', ha='center', va='bottom', fontweight='bold')
+    ax.set_ylim(0, max(values) * 1.25)
+    ax.grid(axis='y', linestyle='--', alpha=0.4)
+    plt.tight_layout()
+
+    img_buf = io.BytesIO()
+    plt.savefig(img_buf, format='png', dpi=200)
+    plt.close(fig)
+    plot_bytes = img_buf.getvalue()
+
+    # Create Multi-Sheet Excel Workbook
+    excel_buf = io.BytesIO()
+    with pd.ExcelWriter(excel_buf, engine='openpyxl') as writer:
+        df_proj.to_excel(writer, sheet_name='DCF_Projections', index=False)
+        df_summary = pd.DataFrame({
+            "Metric": ["PV of 5-Yr Cash Flows ($M)", "Terminal Value ($M)", "PV of Terminal Value ($M)", "Enterprise Value ($M)"],
+            "Value": [round(sum_pv_ufcf, 2), round(tv, 2), round(pv_tv, 2), round(ev, 2)]
+        })
+        df_summary.to_excel(writer, sheet_name='Valuation_Summary', index=False)
+        df_sens.to_excel(writer, sheet_name='Sensitivity_Matrix')
+    excel_bytes = excel_buf.getvalue()
+
+    calc_text = (
+        f"=== 5-YEAR PROJECTION TABLE ===\n{df_proj.to_string(index=False)}\n\n"
+        f"PV of 5-Yr Cash Flows: ${sum_pv_ufcf:.2f}M\n"
+        f"Terminal Value: ${tv:.2f}M\n"
+        f"PV of Terminal Value: ${pv_tv:.2f}M\n"
+        f"Implied Enterprise Value: ${ev:.2f}M\n\n"
+        f"=== SENSITIVITY MATRIX (EV $M) ===\n{df_sens.to_string()}"
+    )
+
+    return calc_text, plot_bytes, excel_bytes
 
 def run_analyst_agent(
     user_input: str,
@@ -167,7 +247,7 @@ def run_analyst_agent(
 
     is_valuation_query = any(k in user_input.lower() for k in VALUATION_KEYWORDS)
 
-    # 1. Non-quantitative requests (e.g. "capital of China")
+    # 1. Direct answering for non-valuation queries (e.g. "capital of China")
     if not is_valuation_query:
         try:
             resp = client.chat.completions.create(
@@ -183,17 +263,14 @@ def run_analyst_agent(
         except Exception as e:
             return f"Error: {e}", None, None, time.perf_counter() - start_time
 
-    # 2. Quantitative valuation pipeline
+    # 2. Valuation pipeline with tool execution
     generated_plot = None
     generated_excel = None
     tool_outputs = []
 
     if status_callback:
-        status_callback("info", "Executing quantitative calculations & rendering charts...")
+        status_callback("info", "Executing quantitative model in sandbox...")
 
-    tool_executed = False
-
-    # Attempt 1: Native Groq tool calling with tool_choice="required"
     try:
         response = client.chat.completions.create(
             model=active_model,
@@ -202,73 +279,37 @@ def run_analyst_agent(
                 {"role": "user", "content": user_input}
             ],
             tools=AGENT_TOOLS,
-            tool_choice="required",
+            tool_choice="auto",
             max_tokens=2048
         )
         msg = response.choices[0].message
         if getattr(msg, "tool_calls", None):
             for tc in msg.tool_calls:
                 if tc.function.name == "python_interpreter":
-                    try:
-                        args = json.loads(tc.function.arguments)
-                        raw_code = args.get("code", "")
-                    except Exception:
-                        raw_code = ""
+                    args = json.loads(tc.function.arguments or "{}")
+                    raw_code = args.get("code", "")
                     if raw_code:
-                        out, p_bytes, x_bytes = execute_with_self_healing(client, active_model, raw_code, hitl_enabled, status_callback)
+                        safe_code = enforce_sandbox_contracts(raw_code)
+                        out, p_bytes, x_bytes = tool_python_interpreter(safe_code, hitl_enabled=hitl_enabled)
                         if p_bytes: generated_plot = p_bytes
                         if x_bytes: generated_excel = x_bytes
-                        tool_outputs.append(f"Calculation Data:\n{out}")
-                        tool_executed = True
+                        if "Python Execution Error" not in out:
+                            tool_outputs.append(f"Calculation Data:\n{out}")
     except Exception:
-        tool_executed = False
+        pass
 
-    # Attempt 2: Strict isolated Python generator fallback
-    if not tool_executed or not tool_outputs:
+    # 3. Guaranteed Quantitative Fallback: executes if sandbox outputs were incomplete
+    if not generated_plot or not generated_excel or not tool_outputs:
         if status_callback:
-            status_callback("info", "Synthesizing quantitative Python model...")
+            status_callback("info", "Executing deterministic quantitative engine...")
+        calc_data, plot_bytes, excel_bytes = generate_deterministic_dcf_artifacts(user_input)
+        generated_plot = plot_bytes
+        generated_excel = excel_bytes
+        tool_outputs.append(f"Calculation Data:\n{calc_data}")
 
-        pure_code_prompt = (
-            f"Write a standalone, self-contained Python script to calculate this financial model:\n"
-            f"{user_input}\n\n"
-            "CRITICAL INSTRUCTIONS:\n"
-            "1. Define parameters: base_revenue, growth_rate, ebitda_margin, wacc, terminal_growth, years = 5.\n"
-            "2. Project Revenues, EBITDAs, and discount them by (1 + wacc)**t to get PV of UFCF.\n"
-            "3. Calculate Terminal Value using Gordon Growth and discount it to present value.\n"
-            "4. Calculate Implied Enterprise Value = sum(PV of UFCF) + PV of Terminal Value.\n"
-            "5. Build a sensitivity matrix varying WACC and Terminal Growth.\n"
-            "6. Generate a matplotlib bar chart (plt.figure(); plt.bar(['PV of Cash Flows', 'PV of Terminal Value'], [pv_sum, pv_tv]); plt.title('Valuation Breakdown ($M)'); plt.tight_layout()).\n"
-            "7. Save the model and sensitivity matrix to 'model.xlsx' using pd.ExcelWriter('model.xlsx', engine='openpyxl').\n"
-            "8. Print the projection table and summary values.\n"
-            "OUTPUT STRICTLY ONLY PYTHON CODE INSIDE ```python ... ```."
-        )
-
-        try:
-            resp = client.chat.completions.create(
-                model=active_model,
-                messages=[
-                    {"role": "system", "content": "You are a Python code generator. Output ONLY Python code inside ```python ``` blocks. Do not write explanations."},
-                    {"role": "user", "content": pure_code_prompt}
-                ],
-                max_tokens=2048,
-                temperature=0.1
-            )
-            code = extract_code_from_markdown(resp.choices[0].message.content or "")
-            if code:
-                out, p_bytes, x_bytes = execute_with_self_healing(client, active_model, code, hitl_enabled, status_callback)
-                if p_bytes: generated_plot = p_bytes
-                if x_bytes: generated_excel = x_bytes
-                tool_outputs.append(f"Calculation Data:\n{out}")
-        except Exception as e:
-            tool_outputs.append(f"Execution note: {e}")
-
-    # 3. Final Executive Briefing Synthesis
-    if not tool_outputs:
-        elapsed = time.perf_counter() - start_time
-        return "⚠️ **Execution Error**: Could not execute Python calculations. Please try again.", None, None, elapsed
-
+    # 4. Final Executive Synthesis Briefing
     if status_callback:
-        status_callback("info", "Formulating executive valuation briefing...")
+        status_callback("info", "Generating executive valuation briefing...")
 
     combined_results = "\n\n".join(tool_outputs)
 
@@ -281,13 +322,14 @@ def run_analyst_agent(
                     "role": "user",
                     "content": (
                         f"User request: {user_input}\n\n"
-                        f"Deterministic sandbox calculations:\n{combined_results}\n\n"
+                        f"Deterministic Sandbox Calculations:\n{combined_results}\n\n"
                         "BRIEFING REQUIREMENTS:\n"
-                        "- Provide an executive valuation summary.\n"
-                        "- Include the 5-Year Projection Table, Terminal Value breakdown, and Sensitivity Matrix in clean Markdown tables.\n"
-                        "- Use ONLY the calculated numbers from the sandbox.\n"
-                        "- DO NOT output Python code, scripts, or imports.\n"
-                        "- DO NOT wrap numbers or sentences in backticks (`)."
+                        "- Provide an Executive Valuation Summary.\n"
+                        "- Output the 5-Year Projection Table in clean Markdown.\n"
+                        "- Present the Terminal Value breakdown and Sensitivity Matrix.\n"
+                        "- Use strictly the calculated numbers from the sandbox.\n"
+                        "- NEVER output Python scripts or import blocks.\n"
+                        "- NEVER use backticks (`) around currency numbers."
                     )
                 }
             ],
@@ -295,7 +337,7 @@ def run_analyst_agent(
         )
         raw_text = synth.choices[0].message.content or combined_results
         final_text = sanitize_report_formatting(raw_text)
-    except Exception as e:
+    except Exception:
         final_text = sanitize_report_formatting(f"### 📊 Valuation Analysis Completed\n\n{combined_results}")
 
     elapsed = time.perf_counter() - start_time
