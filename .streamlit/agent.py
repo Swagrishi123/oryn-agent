@@ -12,29 +12,31 @@ from sandbox import tool_python_interpreter
 
 SYSTEM_PROMPT = (
     "You are ORYN Analyst, an elite institutional BFSI quantitative analyst and investment banking advisor.\n\n"
-    "OPERATING & FORMATTING RULES:\n"
-    "1. DIRECT STRUCTURAL DELIVERY: Eliminate all pleasantries, greetings, and meta-commentary. Begin immediately with the analysis.\n"
-    "2. ADAPTIVE PRESENTATION:\n"
-    "   - For Deal Modeling, M&A, FIG, Restructuring, and Financial Metrics: Use structured Markdown tables and formal section headers.\n"
-    "   - For Biographies, Macro Overviews, Political Context, and General Concepts: Use clean executive prose and bullet points. DO NOT force artificial tables or parameter matrices for simple biographies.\n"
-    "3. STRICT MARKDOWN TABLE SYNTAX (WHEN TABLES ARE USED):\n"
-    "   - Every table row MUST be separated by an explicit newline (\\n).\n"
-    "   - Always place the divider row (| :--- | :--- |) on its own separate line between the header and data.\n"
-    "   - Never concatenate table cells or rows into a single run-on sentence.\n"
-    "4. FIG & BANKING REASONING:\n"
-    "   - In rate cuts, asset-sensitive bank NIM compresses. High deposit beta cushions margin; low deposit beta causes severe compression.\n"
-    "   - Rate cuts increase bond prices (reversing AFS paper losses to expand TCE).\n"
-    "5. LEVERAGED FINANCE & M&A:\n"
-    "   - Junior/unsecured debt must price higher than senior secured debt.\n"
+    "CRITICAL LIVE DATA PROTOCOL:\n"
+    "- Whenever a user asks about a company, stock price, valuation, P/E ratio, or market cap, "
+    "YOU MUST CALL the `get_financial_data` tool to pull verified real-time numbers from NSE/BSE or global exchanges.\n"
+    "- NEVER guess, invent, or rely on outdated memory for current stock prices.\n\n"
+    "CRITICAL FORMATTING & BREVITY RULES:\n"
+    "1. NO INTRODUCTORY FLUFF: Eliminate greetings, pleasantries, or preamble. Start directly with the analysis header.\n"
+    "2. STRICT TABLE SYNTAX: Always separate table rows with actual newlines (\\n). Never join rows together.\n"
+    "   | Col 1 | Col 2 |\n"
+    "   | :--- | :--- |\n"
+    "   | Val 1 | Val 2 |\n"
+    "3. RESTRUCTURING & WATERFALL RULES:\n"
+    "   - Always put Chapter 11 priority distributions in ONE consolidated table.\n"
+    "   - DO NOT write out repetitive narrative blocks like 'Step 1: DIP... Step 2: First Lien...'. "
+    "Put all steps directly into the table so the response completes without running out of tokens.\n"
+    "   - Sum total prepetition claims accurately before calculating recoveries.\n"
+    "4. FIG BANKING & LEVFIN LOGIC:\n"
+    "   - In rate cuts, asset-sensitive bank NIM compresses. High deposit beta cushions; low deposit beta causes severe compression.\n"
+    "   - Subordinated/unsecured debt MUST price higher than senior secured debt.\n"
     "   - Sources & Uses percentages must sum to 100.0%.\n"
-    "   - For stock deals, EPS accretion depends on Buyer P/E vs Target P/E; debt deals depend on Target Earnings Yield vs After-Tax Debt Cost.\n"
-    "6. ARITHMETIC PROTOCOL: Always calculate step-by-step to prevent hallucinations.\n"
-    "7. DCF VALUATIONS: Execute formulas, generate visual charts, and export 'model.xlsx' only for explicit quantitative modeling requests."
+    "5. DCF VALUATIONS: Build models, charts, and Excel workbooks only when specifically asked to run a DCF or financial model."
 )
+
 CACHED_WORKING_MODEL = None
 
 def is_quantitative_model_request(prompt: str) -> bool:
-    """Distinguishes explicit DCF model generation from standard advisory memos."""
     p = prompt.lower()
     dcf_terms = [
         "dcf", "discounted cash flow", "sensitivity matrix", 
@@ -44,47 +46,24 @@ def is_quantitative_model_request(prompt: str) -> bool:
     ]
     if any(t in p for t in dcf_terms):
         return True
-        
     has_discount_metric = any(m in p for m in ["wacc", "discount rate", "terminal growth"])
     has_financial_metric = any(m in p for m in ["ebitda margin", "revenue growth", "cash flow projection"])
     return bool(has_discount_metric and has_financial_metric)
 
-def extract_code_from_markdown(text: str) -> str | None:
-    m = re.search(r'```python\s*(.*?)\s*```', text, re.DOTALL)
-    if m:
-        return m.group(1).strip()
-    m_generic = re.search(r'```\s*(.*?)\s*```', text, re.DOTALL)
-    if m_generic:
-        return m_generic.group(1).strip()
-    return None
-
 def sanitize_report_formatting(text: str) -> str:
-    """Fixes collapsed markdown tables, removes leaking delimiters, 
-    and prevents raw '---' dashes from bleeding into the user interface."""
+    """Fixes collapsed markdown tables and prevents run-on text."""
     cleaned = re.sub(r'```(?:python)?\s*[\s\S]*?```', '', text)
-
-    # 1. Split table headers, divider rows (| :--- |), and rows that got crammed onto one line
-    cleaned = re.sub(r'(\|\s*)\n?(\|\s*:?---)', r'\1\n\2', cleaned)
-    cleaned = re.sub(r'(:?---:?\s*\|)\s*(\|)', r'\1\n\2', cleaned)
-    cleaned = re.sub(r'(\|\s*[A-Za-z0-9\$\%][^|\n]*\|)\s*(\|)', r'\1\n\2', cleaned)
-
-    # 2. Ensure blank line spacing before and after tables
+    # Turn back-to-back pipes into separate lines
+    cleaned = re.sub(r'\|\s*\|', '|\n|', cleaned)
     cleaned = re.sub(r'([^\n])\n(\|.*\|)', r'\1\n\n\2', cleaned)
     cleaned = re.sub(r'(\|.*\|)\n([^\n|])', r'\1\n\n\2', cleaned)
-
-    # 3. Clean up formatting artifacts
     cleaned = re.sub(r'(?<!\\)\$', r'\$', cleaned)
-    cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
-    return cleaned.strip()
+    return re.sub(r'\n{3,}', '\n\n', cleaned).strip()
+
 def enforce_sandbox_contracts(code_str: str) -> str:
     clean_code = re.sub(r'ExcelWriter\s*\(\s*[\'"][^\'"]+\.xlsx[\'"]', 'ExcelWriter("model.xlsx"', code_str)
     clean_code = re.sub(r'\.to_excel\s*\(\s*[\'"][^\'"]+\.xlsx[\'"]', '.to_excel("model.xlsx"', clean_code)
-    preamble = (
-        "import numpy as np\n"
-        "import pandas as pd\n"
-        "import matplotlib.pyplot as plt\n"
-        "years = 5\n"
-    )
+    preamble = "import numpy as np\nimport pandas as pd\nimport matplotlib.pyplot as plt\nyears = 5\n"
     return preamble + "\n" + clean_code
 
 def resolve_api_key(api_key: str = "") -> str:
@@ -110,8 +89,8 @@ def get_best_available_model(client: Groq, exclude_model: str = None, force_refr
         available_ids = []
 
     filter_out = ["safeguard", "guard", "whisper", "orpheus", "allam", "arabic", "vision", "embed", "audio"]
-    candidates = [mid for mid in available_ids if not any(b in mid.lower() for b in filter_out) and mid != exclude_model]
-    preference = ["qwen/qwen3.8-27b", "openai/gpt-oss-20b", "openai/gpt-oss-120b", "llama-3.2-3b-preview", "llama-3.1-8b-instant"]
+    candidates = [m for m in available_ids if not any(b in m.lower() for b in filter_out) and m != exclude_model]
+    preference = ["llama-3.1-8b-instant", "qwen/qwen3.8-27b", "openai/gpt-oss-20b"]
 
     test_queue = [m for m in preference if m in candidates] + [m for m in candidates if m not in preference]
     if not test_queue:
@@ -128,13 +107,14 @@ def get_best_available_model(client: Groq, exclude_model: str = None, force_refr
     if candidates:
         CACHED_WORKING_MODEL = candidates[0]
         return CACHED_WORKING_MODEL
-
-    raise RuntimeError("Could not connect to any active Groq text model.")
+    raise RuntimeError("Could not connect to any Groq text model.")
 
 def create_completion_with_fallback(client: Groq, preferred_model: str = None, status_callback=None, **kwargs):
     global CACHED_WORKING_MODEL
     active_model = preferred_model or get_best_available_model(client)
-    kwargs["max_tokens"] = min(kwargs.get("max_tokens", 850), 850)
+    
+    # Generous 1200-token ceiling so reports never cut off
+    kwargs["max_tokens"] = min(kwargs.get("max_tokens", 1200), 1200)
     kwargs["temperature"] = kwargs.get("temperature", 0.1)
     kwargs["model"] = active_model
 
@@ -142,23 +122,12 @@ def create_completion_with_fallback(client: Groq, preferred_model: str = None, s
         return client.chat.completions.create(**kwargs)
     except Exception as e:
         err_str = str(e).lower()
-        if "429" in err_str or "rate_limit_exceeded" in err_str or "output tokens per minute" in err_str:
+        if "429" in err_str or "rate_limit_exceeded" in err_str:
             delay_match = re.search(r'try again in ([0-9.]+)s', err_str)
             sleep_sec = float(delay_match.group(1)) + 0.5 if delay_match else 2.5
             if status_callback:
-                status_callback("info", f"Quota reset pause ({sleep_sec:.1f}s)... retrying on secondary model.")
+                status_callback("info", f"Quota pause ({sleep_sec:.1f}s)... retrying.")
             time.sleep(sleep_sec)
-            alt_model = get_best_available_model(client, exclude_model=active_model, force_refresh=True)
-            kwargs["model"] = alt_model
-            kwargs["max_tokens"] = 600
-            try:
-                return client.chat.completions.create(**kwargs)
-            except Exception:
-                kwargs["model"] = active_model
-                kwargs["max_tokens"] = 500
-                return client.chat.completions.create(**kwargs)
-
-        if any(term in err_str for term in ["404", "model_not_found", "decommissioned", "400"]):
             alt_model = get_best_available_model(client, exclude_model=active_model, force_refresh=True)
             kwargs["model"] = alt_model
             return client.chat.completions.create(**kwargs)
@@ -174,29 +143,10 @@ def build_contextual_messages(user_input: str, system_prompt: str, max_turns: in
                 role = m.get("role", "user")
                 content = m.get("content", "")
                 if role in ["user", "assistant"] and content:
-                    history.append({"role": role, "content": str(content)[:250] + ("..." if len(content) > 250 else "")})
+                    history.append({"role": role, "content": str(content)[:300]})
     except Exception:
         pass
     return [{"role": "system", "content": system_prompt}] + history + [{"role": "user", "content": user_input}]
-
-def parse_prompt_financial_parameters(prompt: str) -> tuple[float, float, float, float, float, int]:
-    p = prompt.lower()
-    rev_match = re.search(r'\$?(\d+(?:\.\d+)?)\s*(?:m|million)?\s*(?:base\s*)?rev', p)
-    base_rev = float(rev_match.group(1)) if rev_match else 50.0
-
-    growth_match = re.search(r'(\d+(?:\.\d+)?)\s*%\s*(?:annual\s*)?growth', p)
-    growth = float(growth_match.group(1)) / 100.0 if growth_match else 0.20
-
-    margin_match = re.search(r'(\d+(?:\.\d+)?)\s*%\s*ebitda', p)
-    margin = float(margin_match.group(1)) / 100.0 if margin_match else 0.25
-
-    wacc_match = re.search(r'(\d+(?:\.\d+)?)\s*%\s*wacc', p)
-    wacc = float(wacc_match.group(1)) / 100.0 if wacc_match else 0.10
-
-    tg_match = re.search(r'(\d+(?:\.\d+)?)\s*%\s*terminal\s*(?:growth)?', p)
-    tg = float(tg_match.group(1)) / 100.0 if tg_match else 0.025
-
-    return base_rev, growth, margin, wacc, tg, 5
 
 def df_to_markdown_table(df: pd.DataFrame, include_index: bool = False) -> str:
     headers = (["Parameter"] if include_index else []) + [str(col) for col in df.columns]
@@ -207,34 +157,19 @@ def df_to_markdown_table(df: pd.DataFrame, include_index: bool = False) -> str:
     return "\n\n" + "\n".join([header_line, sep_line] + row_lines) + "\n\n"
 
 def generate_deterministic_dcf_artifacts(user_input: str) -> tuple[str, bytes, bytes]:
-    base_rev, growth, margin, wacc, tg, years = parse_prompt_financial_parameters(user_input)
+    # Standard DCF parameters
+    base_rev, growth, margin, wacc, tg, years = 50.0, 0.20, 0.25, 0.10, 0.025, 5
     years_idx = list(range(1, years + 1))
-
     rev = [base_rev * ((1 + growth) ** t) for t in years_idx]
     ebitda = [r * margin for r in rev]
     ufcf = ebitda
     df = [1 / ((1 + wacc) ** t) for t in years_idx]
     pv_ufcf = [u * d for u, d in zip(ufcf, df)]
     sum_pv_ufcf = sum(pv_ufcf)
-
-    tv_ufcf = ufcf[-1] * (1 + tg)
-    tv = tv_ufcf / (wacc - tg)
+    tv = (ufcf[-1] * (1 + tg)) / (wacc - tg)
     pv_tv = tv / ((1 + wacc) ** years)
     ev = sum_pv_ufcf + pv_tv
 
-    wacc_range = [wacc - 0.02, wacc - 0.01, wacc, wacc + 0.01, wacc + 0.02]
-    tg_range = [tg - 0.01, tg - 0.005, tg, tg + 0.005, tg + 0.01]
-    sens_data = {}
-    for w in wacc_range:
-        col = []
-        pv_cf = sum([u / ((1 + w) ** t) for t, u in enumerate(ufcf, 1)])
-        for g in tg_range:
-            cur_tv = (ufcf[-1] * (1 + g)) / (w - g)
-            cur_pv_tv = cur_tv / ((1 + w) ** years)
-            col.append(f"${pv_cf + cur_pv_tv:.2f}M")
-        sens_data[f"WACC {w*100:.1f}%"] = col
-
-    df_sens = pd.DataFrame(sens_data, index=[f"TG {g*100:.1f}%" for g in tg_range])
     df_proj = pd.DataFrame({
         "Year": [str(y) for y in years_idx],
         "Revenue ($M)": [f"${x:.2f}M" for x in rev],
@@ -244,17 +179,10 @@ def generate_deterministic_dcf_artifacts(user_input: str) -> tuple[str, bytes, b
         "PV of UFCF ($M)": [f"${x:.2f}M" for x in pv_ufcf]
     })
 
-    fig, ax = plt.subplots(figsize=(8, 4.5))
-    components = ['PV of Cash Flows', 'PV of Terminal Value']
-    values = [sum_pv_ufcf, pv_tv]
-    bars = ax.bar(components, values, color=['#1f77b4', '#2ca02c'], width=0.45)
-    ax.set_title(f'Enterprise Value Breakdown ($M) — Total: ${ev:.2f}M', fontsize=12, fontweight='bold', pad=12)
-    ax.set_ylabel('Present Value ($M)')
-    for bar in bars:
-        yval = bar.get_height()
-        ax.text(bar.get_x() + bar.get_width()/2.0, yval + 5, f'${yval:.2f}M', ha='center', va='bottom', fontweight='bold')
-    ax.set_ylim(0, max(values) * 1.25)
-    ax.grid(axis='y', linestyle='--', alpha=0.4)
+    fig, ax = plt.subplots(figsize=(8, 4))
+    ax.bar(['PV Cash Flows', 'PV Terminal Value'], [sum_pv_ufcf, pv_tv], color=['#4a148c', '#7b1fa2'], width=0.45)
+    ax.set_title(f'Enterprise Value: ${ev:.2f}M', fontsize=12, fontweight='bold')
+    ax.set_ylabel('Value ($M)')
     plt.tight_layout()
 
     img_buf = io.BytesIO()
@@ -265,34 +193,19 @@ def generate_deterministic_dcf_artifacts(user_input: str) -> tuple[str, bytes, b
     excel_buf = io.BytesIO()
     with pd.ExcelWriter(excel_buf, engine='openpyxl') as writer:
         df_proj.to_excel(writer, sheet_name='DCF_Projections', index=False)
-        pd.DataFrame({
-            "Metric": ["PV of 5-Yr Cash Flows ($M)", "Terminal Value ($M)", "PV of Terminal Value ($M)", "Enterprise Value ($M)"],
-            "Value": [round(sum_pv_ufcf, 2), round(tv, 2), round(pv_tv, 2), round(ev, 2)]
-        }).to_excel(writer, sheet_name='Valuation_Summary', index=False)
-        df_sens.to_excel(writer, sheet_name='Sensitivity_Matrix')
     excel_bytes = excel_buf.getvalue()
 
-    summary_df = pd.DataFrame({
-        "Metric": ["Base Revenue", "Annual Growth", "EBITDA Margin", "WACC", "Terminal Growth Rate", "Enterprise Value"],
-        "Value": [f"${base_rev:.2f}M", f"{growth*100:.1f}%", f"{margin*100:.1f}%", f"{wacc*100:.1f}%", f"{tg*100:.2f}%", f"${ev:.2f}M"]
-    })
-
     calc_briefing = (
-        "=====================================================================\n"
-        "INSTITUTIONAL VALUATION MEMORANDUM | DCF SCHEDULE\n"
-        "=====================================================================\n\n"
-        f"**Core Valuation Summary:**\n{df_to_markdown_table(summary_df, include_index=False)}\n\n"
-        f"**1. 5-Year Discrete Cash Flow Projections:**\n{df_to_markdown_table(df_proj, include_index=False)}\n\n"
-        f"**2. Sensitivity Matrix (Enterprise Value in $M):**\n{df_to_markdown_table(df_sens, include_index=True)}"
+        f"### 📊 Institutional DCF Valuation\n\n"
+        f"**Implied Enterprise Value:** **${ev:.2f}M**\n\n"
+        f"{df_to_markdown_table(df_proj, include_index=False)}"
     )
-
     return calc_briefing, plot_bytes, excel_bytes
 
 def run_analyst_agent(
     user_input: str,
     api_key: str = "",
     selected_model: str = None,
-    engine_mode: str = "Cloud (Groq BYOK)",
     hitl_enabled: bool = True,
     status_callback=None,
     **kwargs
@@ -307,49 +220,62 @@ def run_analyst_agent(
     except Exception as e:
         return f"⚠️ **Client Error**: {e}", None, None, 0.0
 
-    # Auto-resolve live market data if the user asks for a ticker quote
-    ticker_match = re.search(r'\b(?:quote|stock|price of|pe of|market cap of)\s+([A-Za-z0-9\.\-\&]+)', user_input.lower())
-    extra_financial_context = ""
-    if ticker_match:
-        extracted_sym = ticker_match.group(1).upper()
+    # 1. DCF Routing
+    if is_quantitative_model_request(user_input):
         if status_callback:
-            status_callback("info", f"Fetching live market metrics for {extracted_sym}...")
-        live_data = tool_get_financial_data(extracted_sym)
-        if "error" not in live_data:
-            extra_financial_context = f"\n[VERIFIED LIVE MARKET DATA: {json.dumps(live_data)}]\n"
+            status_callback("info", "Generating quantitative DCF model and Excel file...")
+        briefing_text, plot_bytes, excel_bytes = generate_deterministic_dcf_artifacts(user_input)
+        return sanitize_report_formatting(briefing_text), plot_bytes, excel_bytes, time.perf_counter() - start_time
 
-    enriched_input = user_input + extra_financial_context
-    is_dcf_calc = is_quantitative_model_request(enriched_input)
+    # 2. Institutional Research & Live Data Execution Loop
+    try:
+        messages = build_contextual_messages(user_input, SYSTEM_PROMPT, max_turns=3)
+        
+        # Call model with live data tools enabled
+        first_resp = create_completion_with_fallback(
+            client=client,
+            preferred_model=selected_model,
+            status_callback=status_callback,
+            messages=messages,
+            tools=AGENT_TOOLS,
+            tool_choice="auto",
+            max_tokens=1200
+        )
+        msg = first_resp.choices[0].message
 
-    if not is_dcf_calc:
-        try:
-            messages = build_contextual_messages(enriched_input, SYSTEM_PROMPT, max_turns=3)
-            resp = create_completion_with_fallback(
+        # Check if the AI decided to fetch live stock data
+        if getattr(msg, "tool_calls", None):
+            messages.append(msg)
+            for tool_call in msg.tool_calls:
+                fn_name = tool_call.function.name
+                args = json.loads(tool_call.function.arguments or "{}")
+                
+                if fn_name == "get_financial_data":
+                    ticker = args.get("ticker", "")
+                    if status_callback:
+                        status_callback("info", f"Fetching live market metrics for {ticker} from NSE/BSE...")
+                    live_result = tool_get_financial_data(ticker)
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "name": fn_name,
+                        "content": json.dumps(live_result)
+                    })
+
+            # Call model a second time with the real live numbers in its hand
+            second_resp = create_completion_with_fallback(
                 client=client,
                 preferred_model=selected_model,
                 status_callback=status_callback,
                 messages=messages,
-                max_tokens=850,
-                temperature=0.1
+                max_tokens=1200
             )
-            elapsed = time.perf_counter() - start_time
-            content = resp.choices[0].message.content or ""
-            return sanitize_report_formatting(content), None, None, elapsed
-        except Exception as e:
-            return f"Error: {e}", None, None, time.perf_counter() - start_time
+            final_text = second_resp.choices[0].message.content or ""
+        else:
+            final_text = msg.content or ""
 
-    # DCF Modeling Engine
-    generated_plot = None
-    generated_excel = None
-    structured_briefing = ""
+        elapsed = time.perf_counter() - start_time
+        return sanitize_report_formatting(final_text), None, None, elapsed
 
-    if status_callback:
-        status_callback("info", "Executing quantitative DCF model...")
-    briefing_text, plot_bytes, excel_bytes = generate_deterministic_dcf_artifacts(enriched_input)
-    generated_plot = plot_bytes
-    generated_excel = excel_bytes
-    structured_briefing = briefing_text
-
-    final_text = sanitize_report_formatting(structured_briefing)
-    elapsed = time.perf_counter() - start_time
-    return final_text, generated_plot, generated_excel, elapsed
+    except Exception as e:
+        return f"Error: {e}", None, None, time.perf_counter() - start_time
