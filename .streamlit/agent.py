@@ -1,4 +1,5 @@
 import json
+import os
 import re
 import time
 from groq import Groq
@@ -26,14 +27,45 @@ def extract_code_from_error(err_str: str) -> str | None:
     m_code = re.search(r'["\']code["\']\s*:\s*["\'](.*?)(?:["\']\s*\}|\Z)', search_target, re.DOTALL)
     return clean_extracted_code(m_code.group(1)) if m_code else None
 
+def resolve_api_key(api_key: str = "") -> str:
+    # 1. User sidebar input
+    if api_key and api_key.strip():
+        return api_key.strip()
+    # 2. Streamlit Cloud Secrets
+    try:
+        import streamlit as st
+        if "GROQ_API_KEY" in st.secrets and st.secrets["GROQ_API_KEY"]:
+            return str(st.secrets["GROQ_API_KEY"]).strip()
+    except Exception:
+        pass
+    # 3. Environment Variable
+    return os.environ.get("GROQ_API_KEY", "").strip()
+
 def run_analyst_agent(
     user_input: str,
-    api_key: str,
+    api_key: str = "",
+    engine_mode: str = "Cloud (Groq BYOK)",
     hitl_enabled: bool = True,
-    status_callback=None
+    status_callback=None,
+    **kwargs
 ) -> tuple[str, bytes | None, bytes | None, float]:
     start_time = time.perf_counter()
-    client = Groq(api_key=api_key, max_retries=0)
+
+    active_key = resolve_api_key(api_key)
+    if not active_key:
+        return (
+            "⚠️ **API Key Missing**: No Groq API key found. Please enter your free key in the sidebar "
+            "or configure `GROQ_API_KEY` under Streamlit Cloud App Settings → Secrets.",
+            None,
+            None,
+            0.0
+        )
+
+    try:
+        client = Groq(api_key=active_key, max_retries=0)
+    except Exception as e:
+        return f"⚠️ **Client Initialization Error**: {e}", None, None, 0.0
+
     active_model = "llama-3.1-8b-instant"
 
     scratchpad = [
@@ -62,8 +94,10 @@ def run_analyst_agent(
                 if status_callback:
                     status_callback("info", "Executing recovered quantitative code...")
                 out, p_bytes, x_bytes = tool_python_interpreter(recovered, hitl_enabled=hitl_enabled)
-                if p_bytes: generated_plot = p_bytes
-                if x_bytes: generated_excel = x_bytes
+                if p_bytes:
+                    generated_plot = p_bytes
+                if x_bytes:
+                    generated_excel = x_bytes
                 tool_outputs.append(f"[python_interpreter]:\n{out}")
                 scratchpad.append({"role": "tool", "tool_call_id": "call_rec", "name": "python_interpreter", "content": out})
                 break
@@ -85,8 +119,10 @@ def run_analyst_agent(
 
                 if fn_name == "python_interpreter":
                     out, p_bytes, x_bytes = tool_python_interpreter(args.get("code", ""), hitl_enabled=hitl_enabled)
-                    if p_bytes: generated_plot = p_bytes
-                    if x_bytes: generated_excel = x_bytes
+                    if p_bytes:
+                        generated_plot = p_bytes
+                    if x_bytes:
+                        generated_excel = x_bytes
                     res = out
                 elif fn_name == "get_financial_data":
                     res = tool_get_financial_data(args.get("ticker", ""))
@@ -101,19 +137,22 @@ def run_analyst_agent(
             final_text = msg.content or ""
             break
 
-    # Synthesis Turn
+    # Final Executive Synthesis
     if tool_outputs and not final_text:
         if status_callback:
             status_callback("info", "Generating executive valuation briefing...")
-        synth = client.chat.completions.create(
-            model=active_model,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": f"Query: {user_input}\n\nTool Results:\n" + "\n\n".join(tool_outputs) + "\n\nProvide the final executive valuation briefing in clean Markdown."}
-            ],
-            max_tokens=2048
-        )
-        final_text = synth.choices[0].message.content or "Analysis complete."
+        try:
+            synth = client.chat.completions.create(
+                model=active_model,
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": f"Query: {user_input}\n\nTool Results:\n" + "\n\n".join(tool_outputs) + "\n\nProvide the final executive valuation briefing in clean Markdown tables."}
+                ],
+                max_tokens=2048
+            )
+            final_text = synth.choices[0].message.content or "Analysis complete."
+        except Exception as e:
+            final_text = f"Synthesis note: {e}"
 
     elapsed = time.perf_counter() - start_time
     return final_text, generated_plot, generated_excel, elapsed
