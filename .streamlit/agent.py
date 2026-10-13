@@ -11,13 +11,14 @@ SYSTEM_PROMPT = (
     "CORE RULES:\n"
     "1. For general or conversational questions (e.g. 'What is the capital of China?'), "
     "answer directly and concisely. Do NOT invoke valuation models or tools.\n"
-    "2. For valuation and DCF requests, ALWAYS execute python_interpreter to calculate cash flows, "
-    "create a matplotlib chart, and write 'model.xlsx'. Do not estimate numbers in text without code.\n"
+    "2. For valuation and DCF requests, ALWAYS execute python_interpreter. "
+    "Never attempt to calculate valuations in raw text.\n"
     "3. CRITICAL PYTHON RULE: All code in python_interpreter MUST be 100% self-contained.\n"
     "   - Explicitly define ALL parameters at the top (base_revenue, growth_rate, ebitda_margin, wacc, terminal_growth, years = 5).\n"
     "   - Always import pandas as pd, numpy as np, and matplotlib.pyplot as plt.\n"
     "   - ALWAYS create a visual plot using plt.figure() and plt.bar() or plt.plot().\n"
     "   - ALWAYS save the excel file strictly as 'model.xlsx' using pd.ExcelWriter('model.xlsx', engine='openpyxl').\n"
+    "   - Check all brackets () and [] carefully to prevent syntax errors.\n"
     "4. Output clean Markdown tables and executive summaries.\n"
     "   - NEVER use backticks (`) around currency, numbers, or sentences.\n"
     "   - Format currency values cleanly as '$346M' or '346 million USD'."
@@ -98,7 +99,6 @@ def resolve_api_key(api_key: str = "") -> str:
     return os.environ.get("GROQ_API_KEY", "").strip()
 
 def get_best_available_model(client: Groq) -> str:
-    """Finds a verified, active model without external terms restrictions."""
     global CACHED_WORKING_MODEL
     if CACHED_WORKING_MODEL:
         return CACHED_WORKING_MODEL
@@ -108,7 +108,6 @@ def get_best_available_model(client: Groq) -> str:
     except Exception:
         all_ids = []
 
-    # Exclude models with slashes (partner models requiring license terms) and non-text models
     valid_candidates = []
     for mid in all_ids:
         mid_lower = mid.lower()
@@ -131,7 +130,6 @@ def get_best_available_model(client: Groq) -> str:
 
     ordered = [p for p in priority if p in valid_candidates] + [c for c in valid_candidates if c not in priority]
 
-    # Pre-flight probe to ensure the model responds cleanly
     for cand in ordered:
         try:
             client.chat.completions.create(
@@ -146,6 +144,37 @@ def get_best_available_model(client: Groq) -> str:
 
     CACHED_WORKING_MODEL = "llama-3.1-8b-instant"
     return CACHED_WORKING_MODEL
+
+def execute_with_self_healing(client: Groq, model: str, initial_code: str, hitl_enabled: bool, status_callback=None):
+    """Executes code in sandbox; if a Python syntax or runtime error occurs, auto-heals via LLM."""
+    safe_code = enforce_sandbox_contracts(initial_code)
+    out, p_bytes, x_bytes = tool_python_interpreter(safe_code, hitl_enabled=hitl_enabled)
+
+    # If execution failed, run a self-healing pass
+    if "Python Execution Error" in out:
+        if status_callback:
+            status_callback("info", "Detected syntax mismatch; auto-correcting code in sandbox...")
+        repair_prompt = (
+            f"The following Python code failed in execution with this error:\n{out}\n\n"
+            f"Code:\n```python\n{safe_code}\n```\n\n"
+            "Fix the syntax error (ensure all parentheses '()' and brackets '[]' match properly). "
+            "Ensure it exports 'model.xlsx' and generates a matplotlib plot. "
+            "Return ONLY the fixed Python code inside ```python ... ```."
+        )
+        try:
+            repair_resp = client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": repair_prompt}],
+                max_tokens=2048
+            )
+            repaired_code = extract_code_from_markdown(repair_resp.choices[0].message.content or "")
+            if repaired_code:
+                safe_repaired = enforce_sandbox_contracts(repaired_code)
+                out, p_bytes, x_bytes = tool_python_interpreter(safe_repaired, hitl_enabled=hitl_enabled)
+        except Exception:
+            pass
+
+    return out, p_bytes, x_bytes
 
 def run_analyst_agent(
     user_input: str,
@@ -192,12 +221,12 @@ def run_analyst_agent(
         )
         msg = response.choices[0].message
 
-        # Direct return for general inquiries
+        # Direct return for general inquiries (e.g., "capital of China")
         if not getattr(msg, "tool_calls", None) and not is_valuation_query:
             elapsed = time.perf_counter() - start_time
             return sanitize_report_formatting(msg.content or ""), None, None, elapsed
 
-        # Handle tool execution
+        # Handle tool calls with self-healing execution
         if getattr(msg, "tool_calls", None):
             for tc in msg.tool_calls:
                 fn_name = tc.function.name
@@ -208,8 +237,8 @@ def run_analyst_agent(
                 if fn_name == "python_interpreter":
                     if status_callback:
                         status_callback("info", "Executing Python sandbox & generating charts...")
-                    safe_code = enforce_sandbox_contracts(args.get("code", ""))
-                    out, p_bytes, x_bytes = tool_python_interpreter(safe_code, hitl_enabled=hitl_enabled)
+                    raw_code = args.get("code", "")
+                    out, p_bytes, x_bytes = execute_with_self_healing(client, active_model, raw_code, hitl_enabled, status_callback)
                     if p_bytes: generated_plot = p_bytes
                     if x_bytes: generated_excel = x_bytes
                     tool_outputs.append(f"Calculation Data:\n{out}")
@@ -220,14 +249,13 @@ def run_analyst_agent(
                     res = tool_web_search(args.get("query", ""))
                     tool_outputs.append(f"Search Results:\n{res}")
             tool_calling_succeeded = True
+
         elif is_valuation_query:
-            # Check if code was returned directly in message body
             inline_code = extract_code_from_markdown(msg.content or "")
             if inline_code:
                 if status_callback:
                     status_callback("info", "Executing model code & rendering charts...")
-                safe_code = enforce_sandbox_contracts(inline_code)
-                out, p_bytes, x_bytes = tool_python_interpreter(safe_code, hitl_enabled=hitl_enabled)
+                out, p_bytes, x_bytes = execute_with_self_healing(client, active_model, inline_code, hitl_enabled, status_callback)
                 if p_bytes: generated_plot = p_bytes
                 if x_bytes: generated_excel = x_bytes
                 tool_outputs.append(f"Calculation Data:\n{out}")
@@ -238,8 +266,7 @@ def run_analyst_agent(
         if recovered:
             if status_callback:
                 status_callback("info", "Executing recovered quantitative code...")
-            safe_code = enforce_sandbox_contracts(recovered)
-            out, p_bytes, x_bytes = tool_python_interpreter(safe_code, hitl_enabled=hitl_enabled)
+            out, p_bytes, x_bytes = execute_with_self_healing(client, active_model, recovered, hitl_enabled, status_callback)
             if p_bytes: generated_plot = p_bytes
             if x_bytes: generated_excel = x_bytes
             tool_outputs.append(f"Calculation Data:\n{out}")
@@ -254,9 +281,10 @@ def run_analyst_agent(
             f"{SYSTEM_PROMPT}\n\n"
             f"User request: {user_input}\n\n"
             "REQUIREMENTS:\n"
-            "1. Write complete Python code to compute the DCF valuation.\n"
+            "1. Write clean, self-contained Python code to compute the DCF valuation.\n"
             "2. Generate a visual plot using matplotlib (e.g. plt.figure(); plt.bar(...); plt.tight_layout()).\n"
-            "3. Export the model to Excel strictly as 'model.xlsx' using pd.ExcelWriter('model.xlsx', engine='openpyxl').\n"
+            "3. Export the model and sensitivity matrix to Excel strictly as 'model.xlsx' using pd.ExcelWriter('model.xlsx', engine='openpyxl').\n"
+            "4. Carefully verify that all opening '(' and '[' have matching closing ')' and ']'.\n"
             "Wrap all code strictly inside ```python ... ``` fences."
         )
 
@@ -270,15 +298,14 @@ def run_analyst_agent(
             if code:
                 if status_callback:
                     status_callback("info", "Running quantitative sandbox...")
-                safe_code = enforce_sandbox_contracts(code)
-                out, p_bytes, x_bytes = tool_python_interpreter(safe_code, hitl_enabled=hitl_enabled)
+                out, p_bytes, x_bytes = execute_with_self_healing(client, active_model, code, hitl_enabled, status_callback)
                 if p_bytes: generated_plot = p_bytes
                 if x_bytes: generated_excel = x_bytes
                 tool_outputs.append(f"Calculation Data:\n{out}")
         except Exception as e:
             tool_outputs.append(f"Sandbox note: {e}")
 
-    # --- STEP 3: Executive Valuation Briefing Synthesis ---
+    # --- STEP 3: Executive Briefing Synthesis ---
     if status_callback:
         status_callback("info", "Generating executive valuation briefing...")
 
@@ -315,3 +342,4 @@ def run_analyst_agent(
 
     elapsed = time.perf_counter() - start_time
     return final_text, generated_plot, generated_excel, elapsed
+    
