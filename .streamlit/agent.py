@@ -12,19 +12,20 @@ from sandbox import tool_python_interpreter
 
 SYSTEM_PROMPT = (
     "You are ORYN Analyst, an elite institutional BFSI quantitative analyst and investment banking advisor.\n"
-    "CORE OPERATING RULES:\n"
-    "1. DIRECT STRUCTURAL DELIVERY: Eliminate introductory pleasantries, greetings (e.g., 'Hello', 'As the VP of M&A...'), "
-    "and conversational transitions. Open directly with the memo title and structured content.\n"
-    "2. HIGH DENSITY & CONCISENESS: Present financial comparisons and multi-scenario analyses primarily using compact "
-    "Markdown tables (| Metric | Value |) followed by bullet points. Keep prose tight and packed with data so full reports complete within 450 tokens without truncation.\n"
-    "3. INSTITUTIONAL M&A & BFSI REASONING:\n"
-    "   - Stock Deals: Accretion is driven strictly by P/E arbitrage (Buyer P/E > Target Purchase P/E is accretive).\n"
-    "   - Debt / Cash Deals: Buyer P/E is completely irrelevant. Accretion is driven strictly by comparing Target Earnings Yield (1 / Target Purchase P/E) "
-    "against the After-Tax Cost of Financing [Interest Rate * (1 - Tax Rate)]. If After-Tax Debt Cost > Target Earnings Yield, the deal is DILUTIVE.\n"
-    "   - Equity Dilution: Formulate share dilution strictly as Deal Consideration / Buyer Market Cap. Never equate Market Cap / Net Income to share count.\n"
-    "4. FACTUAL RIGOR & CONTEXT: Maintain multi-turn memory. Never fabricate personal profiles, positions, or corporate roles.\n"
-    "5. DCF VALUATION ENGINES: For DCF modeling requests, execute quantitative schedules, render a matplotlib chart, and write 'model.xlsx'.\n"
-    "6. Clean LaTeX Escaping: Format currency as '$346M' or '346 million USD' without awkward backticks."
+    "CRITICAL FORMAT RULES (STRICT TOKEN PRESERVATION):\n"
+    "1. NO GREETINGS OR OPENING FLUFF: Never output 'Hello', 'As the VP...', or conversational introductions. "
+    "Begin immediately with the title header.\n"
+    "2. STRICT TABLE-FIRST ARCHITECTURE: Present ALL transaction metrics and financing scenario comparisons "
+    "inside clean Markdown tables with proper pipes (|) and dashed separators (|---|).\n"
+    "3. HIGH DENSITY BULLETS: Keep explanations to single-sentence bullet points for Breakeven, Leverage, and Goodwill. "
+    "Total response MUST be under 350 tokens.\n"
+    "4. ACCRETION MECHANICS:\n"
+    "   - Stock: Accretion driven by P/E arbitrage (Buyer P/E > Target P/E is accretive).\n"
+    "   - Debt: Driven by Target Earnings Yield (1/Target P/E) vs After-Tax Debt Cost [Rate * (1 - Tax)]. "
+    "If After-Tax Debt Cost > Target Yield, the deal is DILUTIVE.\n"
+    "   - Breakeven pre-tax debt = Target Earnings Yield / (1 - Tax Rate).\n"
+    "   - Equity dilution = Deal Price / Buyer Market Cap.\n"
+    "5. For DCF models, execute code, produce chart, and write 'model.xlsx'."
 )
 
 CACHED_WORKING_MODEL = None
@@ -156,11 +157,10 @@ def create_completion_with_fallback(client: Groq, preferred_model: str = None, s
     else:
         active_model = get_best_available_model(client)
         
-    # Budget 480 tokens to prevent cumulative 60-second limit breaches
     if "max_tokens" in kwargs:
-        kwargs["max_tokens"] = min(kwargs["max_tokens"], 480)
+        kwargs["max_tokens"] = min(kwargs["max_tokens"], 550)
     else:
-        kwargs["max_tokens"] = 480
+        kwargs["max_tokens"] = 550
 
     if "temperature" not in kwargs:
         kwargs["temperature"] = 0.1
@@ -182,14 +182,12 @@ def create_completion_with_fallback(client: Groq, preferred_model: str = None, s
             
             time.sleep(sleep_sec)
             
-            # Switch to alternate model with an independent token quota
             alt_model = get_best_available_model(client, exclude_model=active_model, force_refresh=True)
             kwargs["model"] = alt_model
             kwargs["max_tokens"] = 380
             try:
                 return client.chat.completions.create(**kwargs)
             except Exception:
-                # Secondary retry with base model after cooldown
                 kwargs["model"] = active_model
                 kwargs["max_tokens"] = 350
                 return client.chat.completions.create(**kwargs)
@@ -244,7 +242,7 @@ def parse_prompt_financial_parameters(prompt: str) -> tuple[float, float, float,
     wacc_match = re.search(r'(\d+(?:\.\d+)?)\s*%\s*wacc', p)
     wacc = float(wacc_match.group(1)) / 100.0 if wacc_match else 0.10
 
-    tg_match = re.search(r'(\\d+(?:\\.\\d+)?)\\s*%\\s*terminal\\s*(?:growth)?', p)
+    tg_match = re.search(r'(\d+(?:\.\d+)?)\s*%\s*terminal\s*(?:growth)?', p)
     tg = float(tg_match.group(1)) / 100.0 if tg_match else 0.025
 
     return base_rev, growth, margin, wacc, tg, 5
@@ -411,7 +409,7 @@ def run_analyst_agent(
                 preferred_model=selected_model,
                 status_callback=status_callback,
                 messages=messages,
-                max_tokens=480,
+                max_tokens=550,
                 temperature=0.1
             )
             elapsed = time.perf_counter() - start_time
@@ -437,7 +435,7 @@ def run_analyst_agent(
             messages=messages,
             tools=AGENT_TOOLS,
             tool_choice="auto",
-            max_tokens=480,
+            max_tokens=550,
             temperature=0.1
         )
         msg = response.choices[0].message
