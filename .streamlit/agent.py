@@ -11,25 +11,42 @@ from tools import AGENT_TOOLS, tool_get_financial_data, tool_web_search
 from sandbox import tool_python_interpreter
 
 SYSTEM_PROMPT = (
-    "You are ORYN Analyst, an institutional BFSI quantitative analyst.\n"
+    "You are ORYN Analyst, an institutional BFSI quantitative analyst and equity research specialist.\n"
     "CORE RULES:\n"
     "1. Respond naturally in the language used by the user.\n"
-    "2. For general or conversational questions (e.g., 'Who is Abraham Lincoln?', 'Who is the founder of Meta?'), "
-    "answer directly and concisely in text. Do NOT invoke valuation models or tools.\n"
-    "3. For valuation and DCF requests, ALWAYS execute python_interpreter to calculate cash flows, "
-    "create a matplotlib chart, and write 'model.xlsx'.\n"
-    "4. Output clean Markdown tables and executive summaries.\n"
-    "   - NEVER use backticks (`) around currency, numbers, or phrases.\n"
-    "   - Format currency values cleanly as '$346M' or '346 million USD'."
+    "2. For general knowledge, business history, competitive analysis, or equity research questions "
+    "(e.g., 'Who is Abraham Lincoln?', 'How did Elon Musk become the richest person?', 'Compare MSFT and GOOGL moats'), "
+    "deliver an exhaustive, structured, institutional research brief in clear Markdown text. Do NOT emit placeholder DCF tables.\n"
+    "3. When creating Markdown comparison tables, always use standard Markdown syntax with pipes and dashed separators (| Metric | Value |).\n"
+    "4. For valuation and DCF modeling requests, execute python_interpreter or generate full quantitative schedules, "
+    "render a matplotlib chart, and write 'model.xlsx'.\n"
+    "5. Format currency values cleanly as '$346M' or '346 million USD' without awkward backticks."
 )
 
-VALUATION_KEYWORDS = [
-    "dcf", "valuation", "wacc", "discount rate", "ebitda",
-    "terminal growth", "sensitivity matrix", "financial model",
-    "cash flow", "excel", "lbo", "irr", "npv", "unlevered"
-]
-
 CACHED_WORKING_MODEL = None
+
+def is_quantitative_model_request(prompt: str) -> bool:
+    """Accurately distinguishes between requests to build/calculate a DCF model 
+    versus general/qualitative business valuation and equity research queries."""
+    p = prompt.lower()
+    
+    # Explicit DCF / quantitative modeling terms
+    dcf_terms = [
+        "dcf", "discounted cash flow", "sensitivity matrix", 
+        "unlevered", "lbo model", "run a financial model", 
+        "build a financial model", "run a 5-year", "run a 10-year",
+        "export the financial model to excel"
+    ]
+    if any(t in p for t in dcf_terms):
+        return True
+        
+    # Multi-parameter quantitative modeling combinations
+    has_discount_metric = any(m in p for m in ["wacc", "discount rate", "terminal growth"])
+    has_financial_metric = any(m in p for m in ["ebitda margin", "revenue growth", "cash flow projection"])
+    if has_discount_metric and has_financial_metric:
+        return True
+        
+    return False
 
 def extract_code_from_markdown(text: str) -> str | None:
     m = re.search(r'```python\s*(.*?)\s*```', text, re.DOTALL)
@@ -87,7 +104,6 @@ def get_best_available_model(client: Groq, force_refresh: bool = False) -> str:
     except Exception:
         available_ids = []
 
-    # Exclude audio, prompt guards, and non-English models
     filter_out = [
         "safeguard", "guard", "whisper", "orpheus",
         "allam", "arabic", "vision", "embed", "audio"
@@ -97,7 +113,6 @@ def get_best_available_model(client: Groq, force_refresh: bool = False) -> str:
         if not any(b in mid.lower() for b in filter_out)
     ]
 
-    # Target the verified active models present on your Groq key
     preference = [
         "qwen/qwen3.8-27b",
         "openai/gpt-oss-20b",
@@ -326,10 +341,11 @@ def run_analyst_agent(
     except Exception as e:
         return f"⚠️ **Client Error**: {e}", None, None, 0.0
 
-    is_valuation_query = any(k in user_input.lower() for k in VALUATION_KEYWORDS)
+    # Accurately separate DCF quantitative calculation from analytical/equity research questions
+    is_dcf_calc = is_quantitative_model_request(user_input)
 
-    # 1. Non-valuation questions (e.g. "Who is Abraham Lincoln?", "Who is the founder of Meta?")
-    if not is_valuation_query:
+    # Branch 1: General knowledge, business analysis, equity research memos
+    if not is_dcf_calc:
         try:
             resp = create_completion_with_fallback(
                 client=client,
@@ -342,11 +358,12 @@ def run_analyst_agent(
                 max_tokens=4000
             )
             elapsed = time.perf_counter() - start_time
-            return sanitize_report_formatting(resp.choices[0].message.content or ""), None, None, elapsed
+            content = resp.choices[0].message.content or ""
+            return sanitize_report_formatting(content), None, None, elapsed
         except Exception as e:
             return f"Error: {e}", None, None, time.perf_counter() - start_time
 
-    # 2. Valuation pipeline
+    # Branch 2: Quantitative DCF Modeling
     generated_plot = None
     generated_excel = None
     structured_briefing = ""
@@ -381,7 +398,7 @@ def run_analyst_agent(
     except Exception:
         pass
 
-    # 3. Guaranteed Quantitative Fallback: generates complete Markdown tables, plot, and Excel
+    # Guaranteed Quantitative Fallback for DCF modeling
     if not generated_plot or not generated_excel:
         if status_callback:
             status_callback("info", "Executing deterministic quantitative engine...")
@@ -390,7 +407,6 @@ def run_analyst_agent(
         generated_excel = excel_bytes
         structured_briefing = briefing_text
 
-    # 4. Final Executive Delivery
     final_text = sanitize_report_formatting(structured_briefing)
     elapsed = time.perf_counter() - start_time
     return final_text, generated_plot, generated_excel, elapsed
