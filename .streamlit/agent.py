@@ -15,7 +15,7 @@ SYSTEM_PROMPT = (
     "CORE RULES:\n"
     "1. Respond naturally in the language used by the user.\n"
     "2. For general knowledge, business history, competitive analysis, or equity research questions "
-    "(e.g., 'Who is Abraham Lincoln?', 'How did Elon Musk become the richest person?', 'Compare MSFT and GOOGL moats'), "
+    "(e.g., 'Who is Abraham Lincoln?', 'Who is the governor of RBI?', 'Compare MSFT and GOOGL moats'), "
     "deliver an exhaustive, structured, institutional research brief in clear Markdown text. Do NOT emit placeholder DCF tables.\n"
     "3. When creating Markdown comparison tables, always use standard Markdown syntax with pipes and dashed separators (| Metric | Value |).\n"
     "4. For valuation and DCF modeling requests, execute python_interpreter or generate full quantitative schedules, "
@@ -30,7 +30,6 @@ def is_quantitative_model_request(prompt: str) -> bool:
     versus general/qualitative business valuation and equity research queries."""
     p = prompt.lower()
     
-    # Explicit DCF / quantitative modeling terms
     dcf_terms = [
         "dcf", "discounted cash flow", "sensitivity matrix", 
         "unlevered", "lbo model", "run a financial model", 
@@ -40,7 +39,6 @@ def is_quantitative_model_request(prompt: str) -> bool:
     if any(t in p for t in dcf_terms):
         return True
         
-    # Multi-parameter quantitative modeling combinations
     has_discount_metric = any(m in p for m in ["wacc", "discount rate", "terminal growth"])
     has_financial_metric = any(m in p for m in ["ebitda margin", "revenue growth", "cash flow projection"])
     if has_discount_metric and has_financial_metric:
@@ -145,7 +143,7 @@ def get_best_available_model(client: Groq, force_refresh: bool = False) -> str:
     raise RuntimeError(f"Could not connect to any active Groq text model. Available IDs: [{avail_str}]")
 
 def create_completion_with_fallback(client: Groq, preferred_model: str = None, status_callback=None, **kwargs):
-    """Executes Groq completions with automatic model failover if any 400/404 error occurs."""
+    """Executes Groq completions with automatic failover for 400/404 and 429 OTPM token limits."""
     global CACHED_WORKING_MODEL
     
     filter_out = ["guard", "safeguard", "orpheus", "whisper", "allam", "arabic"]
@@ -154,18 +152,40 @@ def create_completion_with_fallback(client: Groq, preferred_model: str = None, s
     else:
         active_model = get_best_available_model(client)
         
+    # Enforce a safe upper ceiling on max_tokens to prevent exceeding Groq's 1000 OTPM limit
+    if "max_tokens" in kwargs:
+        kwargs["max_tokens"] = min(kwargs["max_tokens"], 800)
+    else:
+        kwargs["max_tokens"] = 800
+
     kwargs["model"] = active_model
 
     try:
         return client.chat.completions.create(**kwargs)
     except Exception as e:
         err_str = str(e).lower()
+        
+        # Scenario 1: Token limit exceeded (429 OTPM rate limit) -> auto-clamp tokens and retry
+        if "429" in err_str or "rate_limit_exceeded" in err_str or "output tokens per minute" in err_str:
+            if status_callback:
+                status_callback("info", "Rate limit token cap detected. Auto-adjusting response token limit...")
+            kwargs["max_tokens"] = 450
+            try:
+                return client.chat.completions.create(**kwargs)
+            except Exception:
+                active_model = get_best_available_model(client, force_refresh=True)
+                kwargs["model"] = active_model
+                kwargs["max_tokens"] = 400
+                return client.chat.completions.create(**kwargs)
+
+        # Scenario 2: Model decommissioned or access issue (404 / 400)
         if "404" in err_str or "model_not_found" in err_str or "decommissioned" in err_str or "400" in err_str or "access" in err_str:
             if status_callback:
                 status_callback("info", f"Model `{active_model}` not accessible. Auto-switching to working model...")
             active_model = get_best_available_model(client, force_refresh=True)
             kwargs["model"] = active_model
             return client.chat.completions.create(**kwargs)
+            
         raise e
 
 def parse_prompt_financial_parameters(prompt: str) -> tuple[float, float, float, float, float, int]:
@@ -341,7 +361,6 @@ def run_analyst_agent(
     except Exception as e:
         return f"⚠️ **Client Error**: {e}", None, None, 0.0
 
-    # Accurately separate DCF quantitative calculation from analytical/equity research questions
     is_dcf_calc = is_quantitative_model_request(user_input)
 
     # Branch 1: General knowledge, business analysis, equity research memos
@@ -355,7 +374,7 @@ def run_analyst_agent(
                     {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user", "content": user_input}
                 ],
-                max_tokens=4000
+                max_tokens=800
             )
             elapsed = time.perf_counter() - start_time
             content = resp.choices[0].message.content or ""
@@ -382,7 +401,7 @@ def run_analyst_agent(
             ],
             tools=AGENT_TOOLS,
             tool_choice="auto",
-            max_tokens=2048
+            max_tokens=800
         )
         msg = response.choices[0].message
         if getattr(msg, "tool_calls", None):
