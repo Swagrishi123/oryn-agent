@@ -23,30 +23,42 @@ except Exception:
     def dynamic_web_search(x):
         return None
 
-COMMON_ENGLISH_STOPWORDS = {
+# Blacklist of macro, ALM, FIG, and restructuring terms to prevent false-positive ticker lookups
+FINANCIAL_ACRONYMS_BLACKLIST = {
+    "NIM", "ALM", "TCE", "AFS", "FIG", "BPS", "DIP", "LBO", "WACC", "DCF",
+    "EBITDA", "FCF", "APR", "EV", "PE", "IRR", "CAGR", "ROE", "ROA", "ROIC",
+    "EPS", "NAV", "PBR", "PER", "DPS", "RBI", "SEBI", "FED", "CEO", "CFO",
     "CAN", "YOU", "PULL", "UP", "LIVE", "MARKET", "DATA", "FOR", "AND", "SHOW",
     "THEIR", "IN", "CLEAN", "TABLE", "WHAT", "WHO", "IS", "THE", "GIVE", "GET",
     "ME", "OF", "WITH", "THIS", "THAT", "FROM", "OUT", "RUN", "HOW", "ABOUT",
     "NOW", "ESTIMATE", "PRICE", "CAP", "RANGE", "RATIO", "STOCK", "SHARE",
-    "USD", "INR", "NSE", "BSE", "PE", "EV", "DIP", "EBITDA", "FCF", "APR",
-    "LBO", "DCF", "WACC", "TCE", "NIM", "RBI", "SEBI", "FED", "CEO", "CFO"
+    "USD", "INR", "NSE", "BSE", "FOUNDER", "FOUNDERS", "OF"
 }
 
 SYSTEM_PROMPT = (
-    "You are ORYN Analyst, an elite institutional BFSI quantitative analyst and research advisor.\n\n"
-    "CRITICAL CONTEXT & FACT PROTOCOL:\n"
-    "- When [VERIFIED LIVE EXCHANGE DATA] or [VERIFIED LIVE RESEARCH - RECENT HEADLINES & RECORDS] is provided, "
-    "you MUST base your response strictly on those fresh live facts.\n"
-    "- If asked who holds a public office or leadership position (e.g., Governor of Jharkhand, Governor of Bihar, RBI Governor), "
-    "identify the incumbent from the live headlines, state their tenure start, and note their predecessor.\n\n"
-    "CRITICAL PRESENTATION & TABLE RULES:\n"
-    "1. DIRECT STRUCTURAL DELIVERY: Eliminate introductory pleasantries. Begin directly with the answer.\n"
-    "2. STRICT PROHIBITION ON HTML TABLES: NEVER output <table>, <tr>, <td>, or <th> tags. "
-    "Always format tables using standard Markdown pipes (|) and header divider rows (| :--- | :--- |).\n"
-    "3. INSTITUTIONAL RESTRUCTURING & WATERFALL RULES:\n"
-    "   - Always present priority distributions inside a single consolidated Markdown table.\n"
-    "   - Sum total prepetition claims accurately before calculating recoveries.\n"
-    "4. DCF MODELING: For DCF requests, execute quantitative schedules, render a matplotlib chart, and write 'model.xlsx'."
+    "You are ORYN Analyst, an elite institutional BFSI quantitative analyst and corporate intelligence advisor.\n\n"
+    "CRITICAL FACT PROTOCOL:\n"
+    "- When [VERIFIED LIVE EXCHANGE DATA] or [VERIFIED RESEARCH RECORDS] is provided, "
+    "base your response strictly on those verified facts. Never contradict the context.\n"
+    "- If asked who founded a company or holds public office, state the exact names and dates directly from the verified record.\n\n"
+    "CRITICAL FORMATTING & TABLE RULES (IMMUNITY TO KATEX COLLAPSE):\n"
+    "1. DIRECT STRUCTURAL DELIVERY: Eliminate introductory pleasantries. Begin directly with the analysis header.\n"
+    "2. NO DOLLAR SIGNS IN TABLES: NEVER use '$' inside table cells or column headers. "
+    "State currency in headers as 'USD M' or 'INR' (e.g., | Security Class | Total Claim (USD M) | Recovery (USD M) |). "
+    "Cell values MUST be pure numbers (e.g., | DIP Financing | 50.00 | 50.00 | 100.0% |).\n"
+    "3. STRICT MARKDOWN TABLE SYNTAX: Every table row MUST start and end with a pipe (|). "
+    "Always place the divider row (| :--- | :--- |) immediately below the header row. Never output raw HTML table tags.\n\n"
+    "FINANCIAL REASONING & WATERFALL PROTOCOLS:\n"
+    "1. CHAPTER 11 RESTRUCTURING WATERFALL:\n"
+    "   - Calculate claims strictly in linear priority order: DIP -> First Lien -> Second Lien -> Senior Unsecured -> Subordinated.\n"
+    "   - Tranche recovery = min(Claim, max(0, Remaining EV before tranche)).\n"
+    "   - Present the distribution in ONE unified Markdown table. Never debate, recalculate, or re-evaluate the table in subsequent paragraphs.\n"
+    "   - The fulcrum security is the tranche that receives a partial recovery.\n"
+    "2. FIG & ALM BANKING DYNAMICS:\n"
+    "   - A policy rate cut on an asset-sensitive bank causes Net Interest Margin (NIM) COMPRESSION because floating assets reprice downward faster than liabilities.\n"
+    "   - High deposit beta cushions NIM compression (deposit costs drop quickly). Low deposit beta causes severe NIM compression.\n"
+    "   - Falling benchmark yields increase bond prices, reversing unrealized losses in Available-For-Sale (AFS) portfolios, which directly EXPANDS Tangible Common Equity (TCE).\n"
+    "3. DCF MODELING: Execute quantitative schedules, render matplotlib artifacts, and write 'model.xlsx'."
 )
 
 CACHED_WORKING_MODEL = None
@@ -79,16 +91,25 @@ def extract_and_fetch_live_data(prompt: str, status_callback=None) -> str:
     injected_context = []
     p_lower = prompt.lower()
 
-    # 1. Equity Discovery
+    # 1. Intent-Gated Equity Discovery
     found_tickers = set()
     for name, sym in KNOWN_ENTITIES.items():
         if re.search(r'\b' + re.escape(name) + r'\b', p_lower):
             found_tickers.add(sym)
 
-    raw_candidates = re.findall(r'\b[A-Z]{2,10}\b', prompt)
-    for c in raw_candidates:
-        if c not in COMMON_ENGLISH_STOPWORDS:
-            found_tickers.add(c)
+    dollar_tickers = re.findall(r'\$([A-Za-z]{2,10})\b', prompt)
+    for dt in dollar_tickers:
+        dt_clean = dt.upper()
+        if dt_clean not in FINANCIAL_ACRONYMS_BLACKLIST:
+            found_tickers.add(dt_clean)
+
+    # Trigger stock search only if prompt explicitly requests equity metrics
+    is_stock_request = any(k in p_lower for k in ["stock", "share", "price", "market cap", "52-week", "quote", "ticker"])
+    if is_stock_request:
+        raw_candidates = re.findall(r'\b[A-Z]{2,10}\b', prompt)
+        for c in raw_candidates:
+            if c not in FINANCIAL_ACRONYMS_BLACKLIST:
+                found_tickers.add(c)
 
     target_tickers = list(found_tickers)[:4]
 
@@ -118,61 +139,32 @@ def extract_and_fetch_live_data(prompt: str, status_callback=None) -> str:
 
         if market_rows:
             injected_context.append(
-                "[VERIFIED LIVE EXCHANGE DATA - YOU MUST USE THESE EXACT VALUES IN THE TABLE]:\n" + 
+                "[VERIFIED LIVE EXCHANGE DATA - USE IN TABLE]:\n" + 
                 "\n".join(market_rows)
             )
 
-    # 2. Autonomous Live Web Search for General Knowledge, Leadership & Macro Queries
-    is_gk_query = any(w in p_lower for w in [
-        "who is", "who was", "current governor", "current chief", "current minister",
-        "governor of", "cm of", "ceo of", "chairman of", "president of", "what is",
-        "latest", "tenure", "rbi", "sebi", "news"
-    ]) or ("governor" in p_lower and not target_tickers) or (not target_tickers and "?" in prompt)
-
-    if is_gk_query:
-        if status_callback:
-            status_callback("info", "Autonomous live research: fetching verified records via syndication feed...")
-        scraped_intel = dynamic_web_search(prompt)
-        if scraped_intel:
-            injected_context.append(
-                f"[VERIFIED LIVE RESEARCH - RECENT HEADLINES & RECORDS]:\n{scraped_intel}"
-            )
+    # 2. General Knowledge / Leadership / Corporate Intelligence Research
+    is_pure_stock_quote = bool(target_tickers) and is_stock_request
+    if not is_pure_stock_quote:
+        # Avoid running search for pure quantitative modeling or restructuring prompts
+        if not any(w in p_lower for w in ["dcf", "discounted cash flow", "wacc", "waterfall", "restructuring", "ebitda margin"]):
+            if status_callback:
+                status_callback("info", "Autonomous research: retrieving verified records...")
+            scraped_intel = dynamic_web_search(prompt)
+            if scraped_intel:
+                injected_context.append(
+                    f"[VERIFIED RESEARCH RECORDS - USE THESE FACTS EXCLUSIVELY]:\n{scraped_intel}"
+                )
 
     if injected_context:
         return "\n\n" + "\n\n".join(injected_context) + "\n\n"
     return ""
 
-def convert_html_tables_to_markdown(text: str) -> str:
-    """Converts HTML table tags to Markdown so Streamlit won't strip them into run-on text."""
-    table_pattern = re.compile(r'<table[^>]*>(.*?)</table>', re.DOTALL | re.IGNORECASE)
-    
-    def replace_table(match):
-        table_content = match.group(1)
-        rows = re.findall(r'<tr[^>]*>(.*?)</tr>', table_content, re.DOTALL | re.IGNORECASE)
-        md_rows = []
-        for r in rows:
-            cells = re.findall(r'<t[hd][^>]*>(.*?)</t[hd]>', r, re.DOTALL | re.IGNORECASE)
-            clean_cells = [re.sub(r'<[^>]+>', '', c).strip() for c in cells]
-            if clean_cells:
-                md_rows.append("| " + " | ".join(clean_cells) + " |")
-        
-        if len(md_rows) >= 2:
-            num_cols = len(md_rows[0].split('|')) - 2
-            divider = "| " + " | ".join([":---"] * num_cols) + " |"
-            md_rows.insert(1, divider)
-            return "\n\n" + "\n".join(md_rows) + "\n\n"
-        return "\n".join(md_rows)
-
-    return table_pattern.sub(replace_table, text)
-
 def sanitize_report_formatting(text: str) -> str:
-    """Repairs tables, fixes delimiters, and prevents text concatenation."""
-    # 1. Convert HTML tables to Markdown
-    cleaned = convert_html_tables_to_markdown(text)
-    cleaned = re.sub(r'```(?:python)?\s*[\s\S]*?```', '', cleaned)
+    """Repairs tables, strips list prefixes, and immunizes output against KaTeX math mode."""
+    cleaned = re.sub(r'```(?:python)?\s*[\s\S]*?```', '', text)
     cleaned = re.sub(r'\|\s*\|', '|\n|', cleaned)
 
-    # 2. Ensure valid Markdown table row boundaries and dividers
     lines = cleaned.split('\n')
     output = []
     current_table = []
@@ -188,11 +180,16 @@ def sanitize_report_formatting(text: str) -> str:
 
     for line in lines:
         stripped = line.strip()
+        # Strip leading ordered list numbers (e.g., '1. | Company |' -> '| Company |')
+        stripped = re.sub(r'^\d+[\.\)]\s*\|', '|', stripped)
+        
         if '|' in stripped:
             if not stripped.startswith('|'):
                 stripped = '| ' + stripped
             if not stripped.endswith('|'):
                 stripped = stripped + ' |'
+            # Immunize table row from KaTeX: replace '$' inside tables with 'USD '
+            stripped = stripped.replace('$', 'USD ')
             current_table.append(stripped)
         else:
             if current_table:
@@ -204,8 +201,8 @@ def sanitize_report_formatting(text: str) -> str:
         output.extend(flush_tbl(current_table))
 
     res = '\n'.join(output)
-    # 3. Insert space after currency symbols to prevent KaTeX math mode
-    res = re.sub(r'\$([0-9])', r'$ \1', res)
+    # Immunize body text: replace all '$' followed by numbers with 'USD '
+    res = re.sub(r'\$\s*([0-9])', r'USD \1', res)
     return re.sub(r'\n{3,}', '\n\n', res).strip()
 
 def is_quantitative_model_request(prompt: str) -> bool:
@@ -272,6 +269,9 @@ def create_completion_with_fallback(client: Groq, preferred_model: str = None, s
     
     kwargs["max_tokens"] = min(kwargs.get("max_tokens", 800), 800)
     kwargs["temperature"] = kwargs.get("temperature", 0.1)
+    # Anti-repetition penalties prevent infinite loops
+    kwargs["frequency_penalty"] = 0.15
+    kwargs["presence_penalty"] = 0.1
     kwargs["model"] = active_model
 
     try:
@@ -327,6 +327,7 @@ def generate_deterministic_dcf_artifacts(user_input: str) -> tuple[str, bytes, b
     pv_tv = tv / (1.10 ** years)
     ev = sum_pv_ufcf + pv_tv
 
+    # KaTeX-immune table structure: currency specified in header, numerical values in cells
     df_proj = pd.DataFrame({
         "Year": [str(y) for y in years_idx],
         "Revenue (USD M)": [f"{x:.2f}" for x in rev],
@@ -337,7 +338,7 @@ def generate_deterministic_dcf_artifacts(user_input: str) -> tuple[str, bytes, b
 
     fig, ax = plt.subplots(figsize=(8, 4))
     ax.bar(['PV Cash Flows', 'PV Terminal Value'], [sum_pv_ufcf, pv_tv], color=['#4a148c', '#7b1fa2'], width=0.45)
-    ax.set_title(f'Enterprise Value: $ {ev:.2f}M', fontsize=12, fontweight='bold')
+    ax.set_title(f'Enterprise Value: USD {ev:.2f}M', fontsize=12, fontweight='bold')
     plt.tight_layout()
     
     img_buf = io.BytesIO()
@@ -355,12 +356,12 @@ def generate_deterministic_dcf_artifacts(user_input: str) -> tuple[str, bytes, b
 
     calc_briefing = (
         f"### 📊 Institutional DCF Valuation Schedule\n\n"
-        f"**Implied Enterprise Value:** **$ {ev:.2f}M**\n\n"
+        f"**Implied Enterprise Value:** **USD {ev:.2f}M**\n\n"
         f"{table_md}\n\n"
-        f"* **Cumulative PV of Cash Flows:** $ {sum_pv_ufcf:.2f}M\n"
-        f"* **Terminal Value (TV):** $ {tv:.2f}M\n"
-        f"* **Present Value of TV:** $ {pv_tv:.2f}M\n"
-        f"* **Implied Enterprise Value (EV):** **$ {ev:.2f}M**"
+        f"* **Cumulative PV of Cash Flows:** USD {sum_pv_ufcf:.2f}M\n"
+        f"* **Terminal Value (TV):** USD {tv:.2f}M\n"
+        f"* **Present Value of TV:** USD {pv_tv:.2f}M\n"
+        f"* **Implied Enterprise Value (EV):** **USD {ev:.2f}M**"
     )
     return calc_briefing, img_buf.getvalue(), excel_buf.getvalue()
 
