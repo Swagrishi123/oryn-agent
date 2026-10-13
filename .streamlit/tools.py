@@ -1,37 +1,10 @@
 import json
 import re
 import requests
+import urllib.parse
 import yfinance as yf
 
-# 1. Verified Institutional Leadership Registry
-INSTITUTIONAL_LEADERSHIP = [
-    {
-        "triggers": [("rbi", "governor"), ("reserve bank", "governor"), ("central bank", "governor", "india")],
-        "record": "The current Governor of the Reserve Bank of India (RBI) is Sanjay Malhotra. He is the 26th Governor of the RBI, having assumed office in December 2024 following the conclusion of Shaktikanta Das's tenure."
-    },
-    {
-        "triggers": [("west bengal", "governor"), ("governor", "bengal"), ("governor", "west bengal")],
-        "record": "The current Governor of West Bengal is Dr. C. V. Ananda Bose. He assumed office on 23 November 2022, succeeding Jagdeep Dhankhar (who resigned in July 2022 upon being elected Vice President of India, with La. Ganesan briefly holding additional charge until Bose took oath)."
-    },
-    {
-        "triggers": [("chief minister", "west bengal"), ("cm", "west bengal"), ("mamata", "banerjee")],
-        "record": "The Chief Minister of West Bengal is Mamata Banerjee, who has been in office since May 2011."
-    },
-    {
-        "triggers": [("finance minister", "india"), ("union finance minister")],
-        "record": "The Union Minister of Finance of India is Nirmala Sitharaman."
-    },
-    {
-        "triggers": [("sebi", "chair"), ("sebi", "chief"), ("sebi", "head")],
-        "record": "The Chairperson of the Securities and Exchange Board of India (SEBI) is Madhabi Puri Buch."
-    },
-    {
-        "triggers": [("federal reserve", "chair"), ("fed", "chair"), ("fed", "chairman")],
-        "record": "The Chair of the Federal Reserve (U.S.) is Jerome Powell."
-    }
-]
-
-# 2. Institutional Baseline Benchmarks for Equities
+# Institutional Baseline Benchmarks for Equities
 INSTITUTIONAL_BENCHMARKS = {
     "RELIANCE": {
         "company_name": "Reliance Industries Limited",
@@ -71,13 +44,46 @@ INSTITUTIONAL_BENCHMARKS = {
     }
 }
 
-def fetch_institutional_officeholder_facts(query: str) -> str | None:
-    """Matches macro officeholder queries against verified leadership registries."""
-    q_lower = query.lower()
-    for item in INSTITUTIONAL_LEADERSHIP:
-        for trigger_tuple in item["triggers"]:
-            if all(word in q_lower for word in trigger_tuple):
-                return f"[VERIFIED INSTITUTIONAL RECORD: {item['record']}]"
+def dynamic_web_search(query: str, max_results: int = 3) -> str | None:
+    """Dynamically searches the live web for ANY general knowledge or institutional query."""
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    }
+    encoded_q = urllib.parse.quote_plus(query)
+
+    # Strategy 1: Direct DuckDuckGo HTML Instant Scrape (No API key needed)
+    try:
+        url = f"https://html.duckduckgo.com/html/?q={encoded_q}"
+        res = requests.post(url, headers=headers, data={"q": query}, timeout=3.5)
+        if res.status_code == 200:
+            snippets = re.findall(r'<a class="result__snippet[^>]*>(.*?)</a>', res.text, re.DOTALL)
+            clean_snippets = []
+            for s in snippets[:max_results]:
+                text = re.sub(r'<[^>]+>', '', s).strip()
+                if len(text) > 30:
+                    clean_snippets.append(text)
+            if clean_snippets:
+                return "\n".join([f"- {s}" for s in clean_snippets])
+    except Exception:
+        pass
+
+    # Strategy 2: Dynamic Wikipedia Open Search API Fallback
+    try:
+        wiki_url = f"https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch={encoded_q}&utf8=&format=json&srlimit=2"
+        res = requests.get(wiki_url, headers=headers, timeout=3.0)
+        if res.status_code == 200:
+            search_results = res.json().get("query", {}).get("search", [])
+            wiki_snippets = []
+            for item in search_results:
+                snippet = re.sub(r'<[^>]+>', '', item.get("snippet", "")).strip()
+                title = item.get("title", "")
+                if snippet:
+                    wiki_snippets.append(f"- ({title}): {snippet}")
+            if wiki_snippets:
+                return "\n".join(wiki_snippets)
+    except Exception:
+        pass
+
     return None
 
 def fetch_yahoo_v8_chart(symbol: str) -> dict | None:
@@ -182,4 +188,4 @@ def tool_get_financial_data(ticker: str) -> dict:
     }
 
 def tool_web_search(query: str) -> str:
-    return f"Live search results for: '{query}'."
+    return dynamic_web_search(query) or f"No direct search results for: '{query}'."
