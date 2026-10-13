@@ -335,113 +335,67 @@ def _percent_assumption(prompt: str, patterns: list[str], default: float) -> flo
 
 
 def generate_deterministic_dcf_artifacts(user_input: str) -> tuple[str, bytes | None, bytes | None]:
-    """Build an illustrative DCF using explicit user assumptions or clearly disclosed defaults."""
-    p = user_input.lower()
-    revenue_match = re.search(
-        r"(?:starting|base|initial)\s+revenue(?:\s+of|\s*[:=])?\s*\$?\s*([\d,.]+)\s*(billion|bn|million|mn|m|b)?",
-        p, flags=re.IGNORECASE
-    )
-    base_revenue = float(revenue_match.group(1).replace(",", "")) if revenue_match else 50.0
-    if revenue_match and revenue_match.group(2):
-        unit = revenue_match.group(2).lower()
-        if unit in {"billion", "bn", "b"}:
-            base_revenue *= 1000.0
-
+    """Build an illustrative DCF with transparent UFCF components and disclosed defaults."""
     growth = _percent_assumption(user_input, [
         r"(?:revenue\s+growth|growth\s+rate)\s*(?:of|is|at|=|:)?\s*([\d.]+)\s*%",
-        r"([\d.]+)\s*%\s*(?:annual\s+)?revenue\s+growth"
+        r"([\d.]+)\s*%\s*(?:annual\s+)?revenue\s+growth",
+        r"(?:growing|grows|grow)\s+(?:at\s+)?([\d.]+)\s*%"
     ], 0.20)
-    ebitda_margin = _percent_assumption(user_input, [
-        r"(?:ebitda\s+margin|margin)\s*(?:of|is|at|=|:)?\s*([\d.]+)\s*%",
-        r"([\d.]+)\s*%\s*ebitda\s+margin"
-    ], 0.25)
-    wacc = _percent_assumption(user_input, [
-        r"(?:wacc|discount\s+rate)\s*(?:of|is|at|=|:)?\s*([\d.]+)\s*%",
-        r"([\d.]+)\s*%\s*(?:wacc|discount\s+rate)"
-    ], 0.10)
-    terminal_growth = _percent_assumption(user_input, [
-        r"(?:terminal\s+growth|perpetual\s+growth)\s*(?:rate)?\s*(?:of|is|at|=|:)?\s*([\d.]+)\s*%",
-        r"([\d.]+)\s*%\s*(?:terminal|perpetual)\s+growth"
-    ], 0.025)
-
-    if base_revenue <= 0 or growth <= -1 or not (0 <= ebitda_margin <= 1):
-        return "Invalid DCF assumptions: revenue must be positive, growth must exceed -100%, and EBITDA margin must be between 0% and 100%.", None, None
-    if not (0 < wacc < 1) or not (0 <= terminal_growth < wacc):
-        return "Invalid DCF assumptions: WACC must be between 0% and 100%, and terminal growth must be non-negative and lower than WACC.", None, None
-
-    years_idx = list(range(1, 6))
+    base_match = re.search(r"(?:starting|base|initial)\s+revenue(?:\s+of|\s*[:=])?\s*\$?\s*([\d,.]+)\s*(billion|bn|million|mn|m|b)?", user_input, re.I)
+    year1_match = re.search(r"revenue\s*:\s*(?:usd\s*)?\$?\s*([\d,.]+)\s*(billion|bn|million|mn|m|b)?\s+in\s+year\s*1", user_input, re.I)
+    def to_millions(match):
+        value = float(match.group(1).replace(',', ''))
+        return value * 1000 if (match.group(2) or '').lower() in {'billion', 'bn', 'b'} else value
+    if base_match:
+        base_revenue = to_millions(base_match)
+        revenue_basis = 'Year-0 starting revenue'
+    elif year1_match:
+        year1_revenue = to_millions(year1_match)
+        base_revenue = year1_revenue / (1 + growth)
+        revenue_basis = f'Year-1 revenue of USD {year1_revenue:.2f}M (Year-0 base back-solved)'
+    else:
+        base_revenue, revenue_basis = 50.0, 'default Year-0 starting revenue'
+    ebitda_margin = _percent_assumption(user_input, [r"(?:ebitda\s+margin|margin)\s*(?:of|is|at|=|:)?\s*(?:apparently\s+)?([\d.]+)\s*%", r"([\d.]+)\s*%\s*ebitda\s+margin"], 0.25)
+    wacc = _percent_assumption(user_input, [r"(?:wacc|discount\s+rate)\s*(?:of|is|at|=|:)?\s*(?:apparently\s+)?([\d.]+)\s*%", r"([\d.]+)\s*%\s*(?:wacc|discount\s+rate)"], 0.10)
+    terminal_growth = _percent_assumption(user_input, [r"(?:terminal\s+growth|perpetual\s+growth)\s*(?:rate)?\s*(?:of|is|at|=|:)?\s*(?:apparently\s+)?([\d.]+)\s*%", r"([\d.]+)\s*%\s*(?:terminal|perpetual)\s+growth"], 0.025)
+    if base_revenue <= 0 or growth <= -1 or not 0 < ebitda_margin <= 1:
+        return 'Invalid DCF assumptions: revenue must be positive, growth must exceed -100%, and EBITDA margin must be greater than 0% and at most 100%.', None, None
+    if not 0 < wacc < 1 or not 0 <= terminal_growth < wacc:
+        return 'Invalid DCF assumptions: WACC must be between 0% and 100%, and terminal growth must be non-negative and lower than WACC.', None, None
+    years = list(range(1, 6))
     tax_rate, da_pct, capex_pct, nwc_pct = 0.25, 0.03, 0.04, 0.01
-    revenues = [base_revenue * ((1 + growth) ** year) for year in years_idx]
-    ebitdas = [revenue * ebitda_margin for revenue in revenues]
-    das = [revenue * da_pct for revenue in revenues]
-    ebits = [ebitda - da for ebitda, da in zip(ebitdas, das)]
-    nopats = [ebit * (1 - tax_rate) for ebit in ebits]
-    capex = [revenue * capex_pct for revenue in revenues]
-    delta_nwc = [((revenues[i] - (base_revenue if i == 0 else revenues[i - 1])) * nwc_pct) for i in range(len(revenues))]
-    ufcf = [nopat + da - capex_value - nwc for nopat, da, capex_value, nwc in zip(nopats, das, capex, delta_nwc)]
-    discount_factors = [1 / ((1 + wacc) ** year) for year in years_idx]
-    pv_ufcf = [cash_flow * factor for cash_flow, factor in zip(ufcf, discount_factors)]
-    sum_pv_ufcf = sum(pv_ufcf)
-    terminal_value = (ufcf[-1] * (1 + terminal_growth)) / (wacc - terminal_growth)
-    pv_terminal_value = terminal_value / ((1 + wacc) ** years_idx[-1])
-    enterprise_value = sum_pv_ufcf + pv_terminal_value
-
-    df_proj = pd.DataFrame({
-        "Year": years_idx,
-        "Revenue (USD M)": [round(x, 2) for x in revenues],
-        "EBITDA (USD M)": [round(x, 2) for x in ebitdas],
-        "UFCF (USD M)": [round(x, 2) for x in ufcf],
-        "Discount Factor": [round(x, 4) for x in discount_factors],
-        "PV of UFCF (USD M)": [round(x, 2) for x in pv_ufcf]
-    })
-
+    revenue = [base_revenue * (1 + growth) ** y for y in years]
+    ebitda = [x * ebitda_margin for x in revenue]
+    da = [x * da_pct for x in revenue]
+    ebit = [a - b for a, b in zip(ebitda, da)]
+    taxes = [max(0, x * tax_rate) for x in ebit]
+    capex = [x * capex_pct for x in revenue]
+    dnwc = [(revenue[i] - (base_revenue if i == 0 else revenue[i-1])) * nwc_pct for i in range(5)]
+    ufcf = [e - t + d - c - n for e, t, d, c, n in zip(ebit, taxes, da, capex, dnwc)]
+    factors = [1 / (1 + wacc) ** y for y in years]
+    pv = [x * f for x, f in zip(ufcf, factors)]
+    pv_cashflows = sum(pv)
+    terminal_value = ufcf[-1] * (1 + terminal_growth) / (wacc - terminal_growth)
+    pv_terminal = terminal_value / (1 + wacc) ** 5
+    ev = pv_cashflows + pv_terminal
+    df_proj = pd.DataFrame({'Year': years, 'Revenue (USD M)': [round(x,2) for x in revenue], 'EBITDA (USD M)': [round(x,2) for x in ebitda], 'D&A (USD M)': [round(x,2) for x in da], 'EBIT (USD M)': [round(x,2) for x in ebit], 'Cash Taxes (USD M)': [round(x,2) for x in taxes], 'CapEx (USD M)': [round(x,2) for x in capex], 'Change in NWC (USD M)': [round(x,2) for x in dnwc], 'UFCF (USD M)': [round(x,2) for x in ufcf], 'Discount Factor': [round(x,4) for x in factors], 'PV of UFCF (USD M)': [round(x,2) for x in pv]})
     fig, ax = plt.subplots(figsize=(8, 4))
-    ax.bar(["PV of UFCF", "PV of Terminal Value"], [sum_pv_ufcf, pv_terminal_value], width=0.45)
-    ax.set_title(f"Illustrative Enterprise Value: USD {enterprise_value:.2f}M")
+    ax.bar(['PV of UFCF', 'PV of Terminal Value'], [pv_cashflows, pv_terminal], width=0.45)
+    ax.set_title(f'Illustrative Enterprise Value: USD {ev:.2f}M')
     plt.tight_layout()
     img_buf = io.BytesIO()
-    plt.savefig(img_buf, format="png", dpi=160)
-    plt.close("all")
-
+    plt.savefig(img_buf, format='png', dpi=160)
+    plt.close('all')
     excel_buf = io.BytesIO()
-    with pd.ExcelWriter(excel_buf, engine="openpyxl") as writer:
-        df_proj.to_excel(writer, sheet_name="DCF_Projections", index=False)
-
-    headers = "| " + " | ".join(df_proj.columns) + " |"
-    divider = "| " + " | ".join([":---"] * len(df_proj.columns)) + " |"
-    rows = ["| " + " | ".join(map(str, row)) + " |" for row in df_proj.values]
-    table_md = "\n".join([headers, divider] + rows)
-    assumptions = (
-        f"- Starting revenue: USD {base_revenue:.2f}M\n"
-        f"- Annual revenue growth: {growth:.2%}\n"
-        f"- EBITDA margin: {ebitda_margin:.2%}\n"
-        f"- WACC: {wacc:.2%}\n"
-        f"- Terminal growth: {terminal_growth:.2%}\n"
-        f"- Tax rate / D&A / CapEx / change in NWC: {tax_rate:.0%} / {da_pct:.0%} / {capex_pct:.0%} / {nwc_pct:.0%} of revenue (model defaults)"
-    )
-    missing = []
-    for label, patterns in [
-        ("starting revenue", [r"(?:starting|base|initial)\s+revenue"]),
-        ("revenue growth", [r"revenue\s+growth", r"growth\s+rate"]),
-        ("EBITDA margin", [r"ebitda\s+margin", r"margin"]),
-        ("WACC", [r"wacc", r"discount\s+rate"]),
-        ("terminal growth", [r"terminal\s+growth", r"perpetual\s+growth"])
-    ]:
-        if not any(re.search(pattern, user_input, re.IGNORECASE) for pattern in patterns):
-            missing.append(label)
-    disclaimer = "Illustrative model. Default assumptions used for: " + ", ".join(missing) + "." if missing else "Assumptions were supplied in the prompt; confirm units and financial definitions before relying on this estimate."
-    briefing = (
-        "### Illustrative DCF Valuation\n\n"
-        f"**Implied Enterprise Value: USD {enterprise_value:.2f}M**\n\n"
-        f"**Assumptions**\n{assumptions}\n\n"
-        f"*{disclaimer}*\n\n"
-        f"{table_md}\n\n"
-        f"- Present value of projected UFCF: USD {sum_pv_ufcf:.2f}M\n"
-        f"- Terminal value: USD {terminal_value:.2f}M\n"
-        f"- Present value of terminal value: USD {pv_terminal_value:.2f}M\n"
-    )
-    return briefing, img_buf.getvalue(), excel_buf.getvalue()
-
+    with pd.ExcelWriter(excel_buf, engine='openpyxl') as writer:
+        df_proj.to_excel(writer, sheet_name='DCF_Projections', index=False)
+    headers = '| ' + ' | '.join(df_proj.columns) + ' |'
+    divider = '| ' + ' | '.join([':---'] * len(df_proj.columns)) + ' |'
+    rows = ['| ' + ' | '.join(map(str, row)) + ' |' for row in df_proj.values]
+    table = '\n'.join([headers, divider] + rows)
+    assumptions = (f'- Revenue basis: {revenue_basis}\n- Year-0 starting revenue: USD {base_revenue:.2f}M\n- Revenue growth: {growth:.2%}\n- EBITDA margin: {ebitda_margin:.2%}\n- WACC: {wacc:.2%}\n- Terminal growth: {terminal_growth:.2%}\n- Illustrative defaults: tax {tax_rate:.0%}, D&A {da_pct:.0%} of revenue, CapEx {capex_pct:.0%} of revenue, change in NWC {nwc_pct:.0%} of incremental revenue.')
+    report = (f'### Illustrative DCF Valuation\n\n**Implied Enterprise Value: USD {ev:.2f}M**\n\n**Important:** This is not a verified valuation of Reliance Industries. Validate all inputs against company financial statements.\n\n**Assumptions**\n{assumptions}\n\n{table}\n\n- Present value of projected UFCF: USD {pv_cashflows:.2f}M\n- Terminal value: USD {terminal_value:.2f}M\n- Present value of terminal value: USD {pv_terminal:.2f}M\n- Enterprise value = PV of projected UFCF + PV of terminal value.')
+    return report, img_buf.getvalue(), excel_buf.getvalue()
 def run_analyst_agent(
     user_input: str,
     api_key: str = "",
