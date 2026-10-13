@@ -7,34 +7,40 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from groq import Groq
-from tools import AGENT_TOOLS, tool_get_financial_data, tool_web_search
+from tools import (
+    AGENT_TOOLS, 
+    tool_get_financial_data, 
+    fetch_institutional_officeholder_facts,
+    tool_web_search
+)
 from sandbox import tool_python_interpreter
 
 SYSTEM_PROMPT = (
     "You are ORYN Analyst, an elite institutional BFSI quantitative analyst and investment banking advisor.\n\n"
-    "CRITICAL LIVE DATA RULE:\n"
-    "- When [VERIFIED LIVE EXCHANGE DATA] is provided, you MUST construct the analysis around those exact figures.\n"
-    "- Use the exact rupee prices, 52-week ranges, and market caps provided. Never replace them with approximate figures.\n\n"
-    "CRITICAL TABLE & PRESENTATION RULES:\n"
-    "1. DIRECT STRUCTURAL DELIVERY: Eliminate all greetings, pleasantries, and meta-commentary. "
-    "Begin immediately with the report title.\n"
-    "2. STRICT MARKDOWN TABLE SYNTAX:\n"
-    "   - Every table row MUST be separated by a single newline (\\n) and start/end with a pipe (|).\n"
-    "   - Always put the divider row (| :--- | :--- |) on its own separate line directly below the header row.\n"
-    "   - Never join multiple table rows together on the same line.\n"
-    "3. INSTITUTIONAL RESTRUCTURING & WATERFALL RULES:\n"
-    "   - Always present Chapter 11 priority distributions inside a single consolidated Markdown table.\n"
+    "CRITICAL CONTEXT & FACT PROTOCOL:\n"
+    "- When [VERIFIED LIVE EXCHANGE DATA] or [VERIFIED INSTITUTIONAL RECORD] is provided in the prompt, "
+    "you MUST base your analysis strictly on those facts. Never contradict the provided context.\n"
+    "- For leadership questions (e.g., RBI Governor), accurately state the current officeholder using the verified record.\n\n"
+    "CRITICAL TABLE & COMPLETION RULES:\n"
+    "1. COMPLETE EVERY DELIVERABLE: Never cut off mid-sentence or stop mid-table. Always generate every row and column to completion.\n"
+    "2. DIRECT STRUCTURAL DELIVERY: Eliminate introductory pleasantries and filler text. Begin directly with the analysis header.\n"
+    "3. STRICT MARKDOWN TABLE SYNTAX:\n"
+    "   - Every table row MUST be separated by an actual newline (\\n) and start and end with a pipe (|).\n"
+    "   - Always place the divider row (| :--- | :--- |) on its own separate line directly below the header row.\n"
+    "   - Never join multiple table rows together on a single line.\n"
+    "4. CHAPTER 11 RESTRUCTURING & WATERFALL RULES:\n"
+    "   - Always present priority distributions inside a single consolidated Markdown table.\n"
     "   - Do NOT write repetitive text blocks like 'Step 1: DIP... Step 2: First Lien...'. "
     "Consolidate all steps into the table so the response completes before token limits.\n"
     "   - Sum total prepetition claims accurately before calculating recoveries.\n"
-    "4. FIG & BANKING REASONING:\n"
+    "5. FIG & BANKING REASONING:\n"
     "   - Asset-sensitive banks face NIM COMPRESSION during rate cuts.\n"
     "   - High deposit beta cushions NIM; low deposit beta causes severe compression.\n"
     "   - Rate cuts increase bond prices, reversing AFS paper losses and boosting TCE.\n"
-    "5. LEVERAGED FINANCE (LEVFIN) RULES:\n"
+    "6. LEVERAGED FINANCE (LEVFIN) RULES:\n"
     "   - Pricing Hierarchy: Subordinated/unsecured debt MUST price HIGHER than senior secured debt.\n"
     "   - Sources & Uses percentages must divide by Total Sources/Uses and sum to exactly 100.0%.\n"
-    "6. DCF MODELING: For DCF requests, execute quantitative schedules, render a matplotlib chart, and write 'model.xlsx'."
+    "7. DCF MODELING: For DCF requests, execute quantitative schedules, render a matplotlib chart, and write 'model.xlsx'."
 )
 
 CACHED_WORKING_MODEL = None
@@ -64,79 +70,92 @@ KNOWN_ENTITIES = {
 }
 
 def extract_and_fetch_live_data(prompt: str, status_callback=None) -> str:
-    """Pre-detects company names or tickers and fetches live prices directly from the exchange."""
-    found_tickers = set()
+    """Pre-detects company tickers or institutional leadership queries and injects verified facts."""
+    injected_context = []
     p_lower = prompt.lower()
 
+    # 1. Macro & Institutional Officeholders (e.g., RBI Governor)
+    macro_facts = fetch_institutional_officeholder_facts(prompt)
+    if macro_facts:
+        if status_callback:
+            status_callback("info", "Retrieved verified institutional officeholder records...")
+        injected_context.append(macro_facts)
+
+    # 2. Equity Tickers & Companies
+    found_tickers = set()
     for name, sym in KNOWN_ENTITIES.items():
         if re.search(r'\b' + re.escape(name) + r'\b', p_lower):
             found_tickers.add(sym)
 
     raw_candidates = re.findall(r'\b[A-Z]{2,10}\b', prompt)
-    ignored = {"USD", "INR", "NSE", "BSE", "PE", "EV", "DIP", "EBITDA", "FCF", "APR", "LBO", "DCF", "WACC", "TCE", "NIM"}
+    ignored = {"USD", "INR", "NSE", "BSE", "PE", "EV", "DIP", "EBITDA", "FCF", "APR", "LBO", "DCF", "WACC", "TCE", "NIM", "RBI"}
     for c in raw_candidates:
         if c not in ignored:
             found_tickers.add(c)
 
-    if not found_tickers:
-        return ""
-
-    results = []
-    for ticker in found_tickers:
-        if status_callback:
-            status_callback("info", f"Retrieving live exchange metrics for {ticker}...")
-        try:
-            data = tool_get_financial_data(ticker)
-            if "error" not in data:
+    if found_tickers:
+        market_rows = []
+        for ticker in found_tickers:
+            if status_callback:
+                status_callback("info", f"Retrieving live metrics for {ticker}...")
+            try:
+                data = tool_get_financial_data(ticker)
                 price = data.get("current_price", "N/A")
                 mcap = data.get("market_cap", "N/A")
                 high = data.get("52w_high", "N/A")
                 low = data.get("52w_low", "N/A")
                 resolved = data.get("ticker_resolved", ticker)
+                cname = data.get("company_name", ticker)
 
-                if status_callback:
+                if status_callback and price != "N/A":
                     status_callback("info", f"✅ {ticker} Live Price: {price} | Market Cap: {mcap}")
 
-                results.append(
-                    f"- Company: {ticker} ({resolved}) | Current Price: {price} | Market Cap: {mcap} | "
-                    f"52W High: {high} | 52W Low: {low}"
+                market_rows.append(
+                    f"- {cname} ({resolved}): Current Price = {price}, Market Cap = {mcap}, "
+                    f"52-Week High = {high}, 52-Week Low = {low}"
                 )
-        except Exception:
-            continue
+            except Exception:
+                continue
 
-    if results:
-        return "\n\n[VERIFIED LIVE EXCHANGE DATA - YOU MUST USE THESE EXACT VALUES]:\n" + "\n".join(results) + "\n\n"
+        if market_rows:
+            injected_context.append(
+                "[VERIFIED LIVE EXCHANGE DATA - YOU MUST USE THESE EXACT VALUES IN THE TABLE]:\n" + 
+                "\n".join(market_rows)
+            )
+
+    if injected_context:
+        return "\n\n" + "\n\n".join(injected_context) + "\n\n"
     return ""
 
 def sanitize_report_formatting(text: str) -> str:
-    """Deterministic table formatter that ensures tables render with correct linebreaks."""
+    """Repairs tables and ensures every table row is valid Markdown with newlines."""
     cleaned = re.sub(r'```(?:python)?\s*[\s\S]*?```', '', text)
     cleaned = re.sub(r'\|\s*\|', '|\n|', cleaned)
 
-    raw_lines = cleaned.split('\n')
-    formatted_lines = []
+    lines = cleaned.split('\n')
+    output = []
     in_table = False
 
-    for line in raw_lines:
-        trimmed = line.strip()
-        is_table_row = trimmed.startswith('|') and trimmed.endswith('|')
-
-        if is_table_row:
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith('|'):
+            if not stripped.endswith('|'):
+                stripped = stripped + " |"
             if not in_table:
-                if formatted_lines and formatted_lines[-1] != "":
-                    formatted_lines.append("")
+                if output and output[-1] != "":
+                    output.append("")
                 in_table = True
-            formatted_lines.append(trimmed)
+            output.append(stripped)
         else:
             if in_table:
-                if formatted_lines and formatted_lines[-1] != "":
-                    formatted_lines.append("")
+                if output and output[-1] != "":
+                    output.append("")
                 in_table = False
-            formatted_lines.append(line)
+            output.append(line)
 
-    cleaned = '\n'.join(formatted_lines)
-    cleaned = re.sub(r'(?<!\\)\$', r'\$', cleaned)
-    return re.sub(r'\n{3,}', '\n\n', cleaned).strip()
+    res = '\n'.join(output)
+    res = re.sub(r'(?<!\\)\$', r'\$', res)
+    return re.sub(r'\n{3,}', '\n\n', res).strip()
 
 def is_quantitative_model_request(prompt: str) -> bool:
     p = prompt.lower()
@@ -221,7 +240,7 @@ def create_completion_with_fallback(client: Groq, preferred_model: str = None, s
             return client.chat.completions.create(**kwargs)
         raise e
 
-def build_contextual_messages(user_input: str, system_prompt: str, max_turns: int = 3) -> list[dict]:
+def build_contextual_messages(user_input: str, system_prompt: str, max_turns: int = 2) -> list[dict]:
     history = []
     try:
         import streamlit as st
@@ -231,7 +250,7 @@ def build_contextual_messages(user_input: str, system_prompt: str, max_turns: in
                 role = m.get("role", "user")
                 content = m.get("content", "")
                 if role in ["user", "assistant"] and content:
-                    history.append({"role": role, "content": str(content)[:300]})
+                    history.append({"role": role, "content": str(content)})
     except Exception:
         pass
     return [{"role": "system", "content": system_prompt}] + history + [{"role": "user", "content": user_input}]
@@ -297,12 +316,12 @@ def run_analyst_agent(
         briefing_text, plot_bytes, excel_bytes = generate_deterministic_dcf_artifacts(user_input)
         return sanitize_report_formatting(briefing_text), plot_bytes, excel_bytes, time.perf_counter() - start_time
 
-    # Pre-fetch verified live exchange data directly into context
-    live_market_data = extract_and_fetch_live_data(user_input, status_callback=status_callback)
-    augmented_prompt = user_input + live_market_data
+    # Context injection for equities and macro leadership queries
+    context_data = extract_and_fetch_live_data(user_input, status_callback=status_callback)
+    augmented_prompt = user_input + context_data
 
     try:
-        messages = build_contextual_messages(augmented_prompt, SYSTEM_PROMPT, max_turns=3)
+        messages = build_contextual_messages(augmented_prompt, SYSTEM_PROMPT, max_turns=2)
         resp = create_completion_with_fallback(
             client=client,
             preferred_model=selected_model,
