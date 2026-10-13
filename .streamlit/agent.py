@@ -217,7 +217,7 @@ def run_analyst_agent(
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": f"User prompt: {user_input}\n\nCalculation Results:\n{combined_results}\n\nFormat these results into a clean executive Markdown valuation summary with valuation tables."}
             ],
-            max_tokens=1500
+            max_tokens=3000
         )
         final_text = synth.choices[0].message.content or combined_results
     except Exception:
