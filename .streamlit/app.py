@@ -76,7 +76,7 @@ with st.sidebar:
 
 # --- Helper Functions ---
 def clean_markdown_content(text: str) -> str:
-    """Cleans code blocks and ensures Markdown table rows are properly formatted."""
+    """Cleans code blocks and preserves Markdown table integrity."""
     raw_script_pattern = r"(?:import\s+(?:matplotlib|pandas|numpy|plt|yf)[\s\S]*?(?:plt\.show\(\)|plt\.tight_layout\(\)|plt\.close\(\)))"
     text = re.sub(raw_script_pattern, "\n*(Visual chart artifact rendered below)*\n", text)
     code_block_pattern = r"```(?:python)?\s*(?:import\s+(?:matplotlib|plt)|plt\.)[\s\S]*?```"
@@ -86,23 +86,23 @@ def clean_markdown_content(text: str) -> str:
     text = re.sub(r"\*\s+\*", "", text)
     text = text.replace(r"\approx", "≈").replace(r"\times", "×")
 
-    # Split horizontally merged rows
+    # Split horizontally merged table rows
     text = re.sub(r'\|\s*\|', '|\n|', text)
 
-    raw_lines = text.split('\n')
+    lines = text.split('\n')
     formatted = []
     in_table = False
 
-    for line in raw_lines:
-        trimmed = line.strip()
-        is_row = trimmed.startswith('|') and trimmed.endswith('|')
-
-        if is_row:
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith('|'):
+            if not stripped.endswith('|'):
+                stripped = stripped + " |"
             if not in_table:
                 if formatted and formatted[-1] != "":
                     formatted.append("")
                 in_table = True
-            formatted.append(trimmed)
+            formatted.append(stripped)
         else:
             if in_table:
                 if formatted and formatted[-1] != "":
