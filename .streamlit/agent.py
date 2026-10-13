@@ -61,7 +61,6 @@ def is_quantitative_model_request(prompt: str) -> bool:
 def sanitize_report_formatting(text: str) -> str:
     """Repairs collapsed markdown tables, separates inline rows, and removes formatting artifacts."""
     cleaned = re.sub(r'```(?:python)?\s*[\s\S]*?```', '', text)
-    # Split rows where the model skipped a newline
     cleaned = re.sub(r'\|\s*\|', '|\n|', cleaned)
     cleaned = re.sub(r'([^\n])\n(\|.*\|)', r'\1\n\n\2', cleaned)
     cleaned = re.sub(r'(\|.*\|)\n([^\n|])', r'\1\n\n\2', cleaned)
@@ -283,7 +282,25 @@ def run_analyst_agent(
 
         # Handle tool invocation if live market data is requested
         if getattr(msg, "tool_calls", None):
-            messages.append(msg)
+            # Clean assistant message dictionary: strips any forbidden 'reasoning' fields
+            cleaned_tool_calls = []
+            for tc in msg.tool_calls:
+                cleaned_tool_calls.append({
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {
+                        "name": tc.function.name,
+                        "arguments": tc.function.arguments
+                    }
+                })
+
+            assistant_msg_dict = {
+                "role": "assistant",
+                "content": msg.content or "",
+                "tool_calls": cleaned_tool_calls
+            }
+            messages.append(assistant_msg_dict)
+
             for tool_call in msg.tool_calls:
                 fn_name = tool_call.function.name
                 args = json.loads(tool_call.function.arguments or "{}")
@@ -300,7 +317,7 @@ def run_analyst_agent(
                         "content": json.dumps(live_result)
                     })
 
-            # Re-query model with live financial metrics in context
+            # Second call: send back with stripped messages dictionary
             second_resp = create_completion_with_fallback(
                 client=client,
                 preferred_model=selected_model,
@@ -313,7 +330,4 @@ def run_analyst_agent(
             final_text = msg.content or ""
 
         elapsed = time.perf_counter() - start_time
-        return sanitize_report_formatting(final_text), None, None, elapsed
-
-    except Exception as e:
-        return f"Error: {e}", None, None, time.perf_counter() - start_time
+        return sanitize_report_
