@@ -9,15 +9,18 @@ from sandbox import tool_python_interpreter
 SYSTEM_PROMPT = (
     "You are ORYN Analyst, an institutional BFSI quantitative analyst.\n"
     "CORE RULES:\n"
-    "1. For general knowledge, factual, or conversational questions (e.g., 'What is the capital of China?'), "
+    "1. For general or conversational questions (e.g. 'What is the capital of China?'), "
     "answer directly and concisely. Do NOT invoke valuation models or tools.\n"
-    "2. For valuation and DCF requests, compute deterministic cash flows, discounting, and sensitivity matrices.\n"
+    "2. For valuation and DCF requests, ALWAYS execute python_interpreter to calculate cash flows, "
+    "create a matplotlib chart, and write 'model.xlsx'.\n"
     "3. CRITICAL PYTHON RULE: All code in python_interpreter MUST be 100% self-contained.\n"
     "   - Explicitly define ALL parameters at the top (base_revenue, growth_rate, ebitda_margin, wacc, terminal_growth, years = 5).\n"
     "   - Always import pandas as pd, numpy as np, and matplotlib.pyplot as plt.\n"
     "   - ALWAYS create a visual plot using plt.figure() and plt.bar() or plt.plot().\n"
     "   - ALWAYS save the excel file strictly as 'model.xlsx' using pd.ExcelWriter('model.xlsx', engine='openpyxl').\n"
-    "4. Output clean Markdown tables and executive summaries. Never output raw Python code blocks in final reports."
+    "4. Output clean Markdown tables and executive summaries.\n"
+    "   - NEVER use backticks (`) around currency, numbers, or sentences.\n"
+    "   - Format currency values cleanly as '$346M' or '346 million USD'."
 )
 
 VALUATION_KEYWORDS = [
@@ -56,8 +59,23 @@ def extract_code_from_markdown(text: str) -> str | None:
         return m_generic.group(1).strip()
     return None
 
+def sanitize_report_formatting(text: str) -> str:
+    """Removes leaked Python blocks and cleans stray backticks causing green highlight bugs."""
+    # 1. Remove raw Python code blocks
+    cleaned = re.sub(r'```(?:python)?\s*[\s\S]*?```', '', text)
+    
+    # 2. Fix broken formatting like `346 million** or **Value of `
+    cleaned = cleaned.replace("** `", "**").replace("` **", "**")
+    cleaned = cleaned.replace("`**", "**").replace("**`", "**")
+    
+    # 3. Strip standalone backticks that wrap numbers/words and create green pills
+    cleaned = re.sub(r'`([^`\n]+)`', r'\1', cleaned)
+    cleaned = cleaned.replace('`', '')
+    
+    return re.sub(r'\n{3,}', '\n\n', cleaned).strip()
+
 def enforce_sandbox_contracts(code_str: str) -> str:
-    """Enforces standard sandbox contracts: guarantees 'model.xlsx' and variable preambles."""
+    """Enforces standard sandbox contracts: guarantees 'model.xlsx' and a matplotlib chart."""
     clean_code = re.sub(r'ExcelWriter\s*\(\s*[\'"][^\'"]+\.xlsx[\'"]', 'ExcelWriter("model.xlsx"', code_str)
     clean_code = re.sub(r'\.to_excel\s*\(\s*[\'"][^\'"]+\.xlsx[\'"]', '.to_excel("model.xlsx"', clean_code)
 
@@ -98,10 +116,8 @@ def get_best_available_model(client: Groq) -> str:
         "llama-3.3-70b-versatile",
         "llama-3.1-8b-instant",
         "llama-3.2-3b-preview",
-        "llama-3.2-1b-preview",
         "deepseek-r1-distill-llama-70b",
-        "mixtral-8x7b-32768",
-        "gemma2-9b-it"
+        "mixtral-8x7b-32768"
     ]
 
     for cand in priority:
@@ -140,7 +156,10 @@ def run_analyst_agent(
     generated_excel = None
     tool_outputs = []
 
-    # Attempt 1: Standard Tool Calling Execution
+    # --- STEP 1: Tool Execution ---
+    # For quantitative valuation requests, require python_interpreter so the LLM cannot skip it.
+    forced_choice = {"type": "function", "function": {"name": "python_interpreter"}} if is_valuation_query else "auto"
+
     tool_calling_succeeded = False
     try:
         response = client.chat.completions.create(
@@ -150,15 +169,15 @@ def run_analyst_agent(
                 {"role": "user", "content": user_input}
             ],
             tools=AGENT_TOOLS,
-            tool_choice="auto",
+            tool_choice=forced_choice,
             max_tokens=2048
         )
         msg = response.choices[0].message
 
-        # If model answered directly without tools and it's NOT a valuation prompt, return immediately
+        # Direct response for non-valuation queries (e.g. "capital of China")
         if not getattr(msg, "tool_calls", None) and not is_valuation_query:
             elapsed = time.perf_counter() - start_time
-            return msg.content or "", None, None, elapsed
+            return sanitize_report_formatting(msg.content or ""), None, None, elapsed
 
         if getattr(msg, "tool_calls", None):
             for tc in msg.tool_calls:
@@ -169,72 +188,74 @@ def run_analyst_agent(
                     args = {}
                 if fn_name == "python_interpreter":
                     if status_callback:
-                        status_callback("info", "Executing quantitative model in sandbox...")
+                        status_callback("info", "Executing quantitative calculations & rendering charts...")
                     safe_code = enforce_sandbox_contracts(args.get("code", ""))
                     out, p_bytes, x_bytes = tool_python_interpreter(safe_code, hitl_enabled=hitl_enabled)
                     if p_bytes: generated_plot = p_bytes
                     if x_bytes: generated_excel = x_bytes
-                    tool_outputs.append(f"[python_interpreter]:\n{out}")
+                    tool_outputs.append(f"Calculation Data:\n{out}")
                 elif fn_name == "get_financial_data":
                     res = tool_get_financial_data(args.get("ticker", ""))
-                    tool_outputs.append(f"[{fn_name}]:\n{res}")
+                    tool_outputs.append(f"Financial Data:\n{res}")
                 elif fn_name == "web_search":
                     res = tool_web_search(args.get("query", ""))
-                    tool_outputs.append(f"[{fn_name}]:\n{res}")
+                    tool_outputs.append(f"Search Results:\n{res}")
             tool_calling_succeeded = True
 
     except Exception as e:
         recovered = extract_code_from_error(str(e))
         if recovered:
             if status_callback:
-                status_callback("info", "Executing recovered quantitative code...")
+                status_callback("info", "Executing quantitative model...")
             safe_code = enforce_sandbox_contracts(recovered)
             out, p_bytes, x_bytes = tool_python_interpreter(safe_code, hitl_enabled=hitl_enabled)
             if p_bytes: generated_plot = p_bytes
             if x_bytes: generated_excel = x_bytes
-            tool_outputs.append(f"[python_interpreter]:\n{out}")
+            tool_outputs.append(f"Calculation Data:\n{out}")
             tool_calling_succeeded = True
 
-    # Attempt 2: Universal Fallback (ONLY for valuation queries where tool calling was skipped)
+    # --- STEP 2: Fallback (if tool calling was not triggered) ---
     if is_valuation_query and not tool_outputs:
         if status_callback:
-            status_callback("info", "Synthesizing financial model & charts...")
+            status_callback("info", "Generating quantitative valuation model...")
 
         code_prompt = (
             f"{SYSTEM_PROMPT}\n\n"
             f"User request: {user_input}\n\n"
             "REQUIREMENTS:\n"
             "1. Write complete Python code to compute the DCF valuation.\n"
-            "2. Generate a clean visual plot using matplotlib (e.g. plt.figure(); plt.bar(...); plt.title(...)).\n"
-            "3. Export the model and sensitivity tables strictly to 'model.xlsx' using pd.ExcelWriter('model.xlsx', engine='openpyxl').\n"
+            "2. Generate a clean visual plot with matplotlib (e.g. plt.figure(); plt.bar(...); plt.title(...)).\n"
+            "3. Export the model and sensitivity tables to Excel strictly as 'model.xlsx' using pd.ExcelWriter('model.xlsx', engine='openpyxl').\n"
             "Wrap all code strictly inside ```python ... ``` fences."
         )
 
-        resp = client.chat.completions.create(
-            model=active_model,
-            messages=[{"role": "user", "content": code_prompt}],
-            max_tokens=2048
-        )
-        code = extract_code_from_markdown(resp.choices[0].message.content or "")
-        if code:
-            if status_callback:
-                status_callback("info", "Running quantitative sandbox...")
-            safe_code = enforce_sandbox_contracts(code)
-            out, p_bytes, x_bytes = tool_python_interpreter(safe_code, hitl_enabled=hitl_enabled)
-            if p_bytes: generated_plot = p_bytes
-            if x_bytes: generated_excel = x_bytes
-            tool_outputs.append(f"[python_interpreter]:\n{out}")
+        try:
+            resp = client.chat.completions.create(
+                model=active_model,
+                messages=[{"role": "user", "content": code_prompt}],
+                max_tokens=2048
+            )
+            code = extract_code_from_markdown(resp.choices[0].message.content or "")
+            if code:
+                if status_callback:
+                    status_callback("info", "Executing Python sandbox...")
+                safe_code = enforce_sandbox_contracts(code)
+                out, p_bytes, x_bytes = tool_python_interpreter(safe_code, hitl_enabled=hitl_enabled)
+                if p_bytes: generated_plot = p_bytes
+                if x_bytes: generated_excel = x_bytes
+                tool_outputs.append(f"Calculation Data:\n{out}")
+        except Exception as e:
+            tool_outputs.append(f"Execution note: {e}")
 
-    # Step 3: Synthesis Turn
+    # --- STEP 3: Final Executive Synthesis ---
     if status_callback:
-        status_callback("info", "Generating executive valuation briefing...")
+        status_callback("info", "Formulating executive briefing...")
 
     combined_results = "\n\n".join(tool_outputs) if tool_outputs else ""
-    
-    # If not a valuation query and no tools ran, return raw answer
+
     if not is_valuation_query and not combined_results:
         elapsed = time.perf_counter() - start_time
-        return "I am ORYN Analyst. How can I assist with your financial valuation or quantitative modeling today?", None, None, elapsed
+        return "I am ORYN Analyst. How can I assist with your quantitative modeling today?", None, None, elapsed
 
     try:
         synth = client.chat.completions.create(
@@ -244,25 +265,22 @@ def run_analyst_agent(
                 {
                     "role": "user",
                     "content": (
-                        f"User prompt: {user_input}\n\n"
-                        f"Calculation Results:\n{combined_results}\n\n"
+                        f"User request: {user_input}\n\n"
+                        f"Sandbox Calculations:\n{combined_results}\n\n"
                         "FORMAT INSTRUCTIONS:\n"
-                        "- Provide a complete executive valuation summary.\n"
-                        "- Include the 5-Year Projection Table, Terminal Value breakdown, and Sensitivity Matrix.\n"
-                        "- STRICT RULE: DO NOT print any Python code, imports, or scripts. Provide ONLY clean Markdown tables and summary notes."
+                        "- Provide an executive valuation summary and complete 5-Year Projection Table.\n"
+                        "- Include the Terminal Value breakdown and Sensitivity Matrix.\n"
+                        "- STRICT RULE: Do not output Python code blocks or imports.\n"
+                        "- STRICT RULE: Do not wrap numbers or phrases in backticks (`). Use standard text formatting."
                     )
                 }
             ],
-            max_tokens=3500
+            max_tokens=2500
         )
         raw_text = synth.choices[0].message.content or combined_results
-    except Exception:
-        raw_text = f"### 📊 Valuation Analysis Completed\n\n{combined_results}"
-
-    # Programmatic Guardrail: Clean out any leaked code blocks
-    final_text = re.sub(r'```python.*?```', '', raw_text, flags=re.DOTALL)
-    final_text = re.sub(r'```.*?```', '', final_text, flags=re.DOTALL)
-    final_text = re.sub(r'\n{3,}', '\n\n', final_text).strip()
+        final_text = sanitize_report_formatting(raw_text)
+    except Exception as e:
+        final_text = sanitize_report_formatting(f"### 📊 Valuation Analysis Completed\n\n{combined_results}")
 
     elapsed = time.perf_counter() - start_time
     return final_text, generated_plot, generated_excel, elapsed
