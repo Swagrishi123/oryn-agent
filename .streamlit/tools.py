@@ -5,28 +5,7 @@ import xml.etree.ElementTree as ET
 import requests
 import yfinance as yf
 
-# Tool schemas maintained for reference
-AGENT_TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "get_financial_data",
-            "description": "Fetch real-time stock price, 52-week range, and market cap for Indian (NSE/BSE) and global equities.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "ticker": {
-                        "type": "string",
-                        "description": "Ticker symbol, e.g. RELIANCE, TCS, INFY, HDFCBANK, AAPL"
-                    }
-                },
-                "required": ["ticker"]
-            }
-        }
-    }
-]
-
-# Institutional Baseline Benchmarks for Equities (Guarantees tables never stall)
+# Institutional Baseline Benchmarks for Indian Equities
 INSTITUTIONAL_BENCHMARKS = {
     "RELIANCE": {
         "company_name": "Reliance Industries Limited",
@@ -66,19 +45,47 @@ INSTITUTIONAL_BENCHMARKS = {
     }
 }
 
-def dynamic_web_search(query: str, max_items: int = 4) -> str | None:
-    """Queries public RSS syndication feeds. Bypasses cloud datacenter IP blocks."""
-    clean_q = query.strip()
-    encoded_q = urllib.parse.quote_plus(clean_q)
-    
-    # 1. Primary Engine: Google News Machine-Readable RSS Feed
-    rss_url = f"https://news.google.com/rss/search?q={encoded_q}&hl=en-IN&gl=IN&ceid=IN:en"
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    }
-    
+def extract_core_entity(query: str) -> str:
+    """Strips conversational phrases to isolate the search entity."""
+    clean = re.sub(
+        r'(?i)\b(who is the founder of|who founded|founder of|founders of|who is the ceo of|ceo of|'
+        r'who is the governor of|current governor of|governor of|who is the cm of|cm of|chief minister of|'
+        r'who is the president of|who is the chairman of|who is|who was|what is|what was|tell me about)\b',
+        '',
+        query
+    )
+    clean = re.sub(r'[,?!\'\"]', '', clean).strip()
+    return clean if len(clean) >= 2 else query.strip()
+
+def fetch_wikipedia_entity_summary(entity: str) -> str | None:
+    """Queries Wikipedia REST summary API for factual encyclopedic data."""
+    headers = {"User-Agent": "ORYNAnalyst/2.0 (Institutional BFSI Research)"}
+    encoded_search = urllib.parse.quote_plus(entity)
     try:
-        res = requests.get(rss_url, headers=headers, timeout=3.5)
+        search_url = f"https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch={encoded_search}&utf8=&format=json&srlimit=1"
+        res = requests.get(search_url, headers=headers, timeout=2.5)
+        if res.status_code == 200:
+            results = res.json().get("query", {}).get("search", [])
+            if results:
+                title = results[0].get("title", "")
+                if title:
+                    summary_url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{urllib.parse.quote(title)}"
+                    s_res = requests.get(summary_url, headers=headers, timeout=2.5)
+                    if s_res.status_code == 200:
+                        extract = s_res.json().get("extract", "")
+                        if extract and len(extract) > 40:
+                            return f"• [{title} Verified Record]: {extract}"
+    except Exception:
+        pass
+    return None
+
+def fetch_google_news_rss(query: str, max_items: int = 3) -> str | None:
+    """Queries machine-readable RSS syndication feeds without datacenter IP blocks."""
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0 Safari/537.36"}
+    encoded_q = urllib.parse.quote_plus(query.strip())
+    rss_url = f"https://news.google.com/rss/search?q={encoded_q}&hl=en-IN&gl=IN&ceid=IN:en"
+    try:
+        res = requests.get(rss_url, headers=headers, timeout=3.0)
         if res.status_code == 200:
             root = ET.fromstring(res.content)
             items = root.findall("./channel/item")
@@ -86,34 +93,28 @@ def dynamic_web_search(query: str, max_items: int = 4) -> str | None:
             for item in items[:max_items]:
                 title = item.findtext("title", "").strip()
                 pub_date = item.findtext("pubDate", "").strip()
-                # Clean publisher suffix from title
                 clean_title = re.sub(r' - [^-]+$', '', title)
                 if clean_title:
                     date_prefix = f"[{pub_date[:16]}] " if pub_date else ""
-                    snippets.append(f"- {date_prefix}{clean_title}")
-            
+                    snippets.append(f"• {date_prefix}{clean_title}")
             if snippets:
                 return "\n".join(snippets)
     except Exception:
         pass
+    return None
 
-    # 2. Secondary Fallback: Wikipedia Summary REST API
-    try:
-        wiki_search_url = f"https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch={encoded_q}&utf8=&format=json&srlimit=1"
-        res = requests.get(wiki_search_url, headers=headers, timeout=2.5)
-        if res.status_code == 200:
-            results = res.json().get("query", {}).get("search", [])
-            if results:
-                title = results[0].get("title", "")
-                summary_url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{urllib.parse.quote(title)}"
-                s_res = requests.get(summary_url, headers=headers, timeout=2.5)
-                if s_res.status_code == 200:
-                    extract = s_res.json().get("extract", "")
-                    if extract:
-                        return f"- ({title}): {extract}"
-    except Exception:
-        pass
-
+def dynamic_web_search(query: str) -> str | None:
+    """Layered retrieval: Encyclopedic entity lookup + timestamped news headlines."""
+    clean_entity = extract_core_entity(query)
+    findings = []
+    wiki_intel = fetch_wikipedia_entity_summary(clean_entity)
+    if wiki_intel:
+        findings.append(wiki_intel)
+    news_intel = fetch_google_news_rss(query)
+    if news_intel:
+        findings.append(news_intel)
+    if findings:
+        return "\n\n".join(findings)
     return None
 
 def fetch_yahoo_v8_chart(symbol: str) -> dict | None:
