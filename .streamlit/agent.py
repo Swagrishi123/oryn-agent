@@ -12,7 +12,7 @@ SYSTEM_PROMPT = (
     "1. For general or conversational questions (e.g. 'What is the capital of China?'), "
     "answer directly and concisely. Do NOT invoke valuation models or tools.\n"
     "2. For valuation and DCF requests, ALWAYS execute python_interpreter to calculate cash flows, "
-    "create a matplotlib chart, and write 'model.xlsx'.\n"
+    "create a matplotlib chart, and write 'model.xlsx'. Do not estimate numbers in text without code.\n"
     "3. CRITICAL PYTHON RULE: All code in python_interpreter MUST be 100% self-contained.\n"
     "   - Explicitly define ALL parameters at the top (base_revenue, growth_rate, ebitda_margin, wacc, terminal_growth, years = 5).\n"
     "   - Always import pandas as pd, numpy as np, and matplotlib.pyplot as plt.\n"
@@ -28,6 +28,8 @@ VALUATION_KEYWORDS = [
     "terminal growth", "sensitivity matrix", "financial model",
     "cash flow", "excel", "lbo", "irr", "npv", "unlevered"
 ]
+
+CACHED_WORKING_MODEL = None
 
 def clean_extracted_code(raw_code: str) -> str:
     clean = raw_code.replace('\\\\n', '\n').replace('\\n', '\n')
@@ -60,22 +62,16 @@ def extract_code_from_markdown(text: str) -> str | None:
     return None
 
 def sanitize_report_formatting(text: str) -> str:
-    """Removes leaked Python blocks and cleans stray backticks causing green highlight bugs."""
-    # 1. Remove raw Python code blocks
+    """Removes leaked code blocks and cleans backticks that trigger green monospace styling."""
     cleaned = re.sub(r'```(?:python)?\s*[\s\S]*?```', '', text)
-    
-    # 2. Fix broken formatting like `346 million** or **Value of `
     cleaned = cleaned.replace("** `", "**").replace("` **", "**")
     cleaned = cleaned.replace("`**", "**").replace("**`", "**")
-    
-    # 3. Strip standalone backticks that wrap numbers/words and create green pills
     cleaned = re.sub(r'`([^`\n]+)`', r'\1', cleaned)
     cleaned = cleaned.replace('`', '')
-    
     return re.sub(r'\n{3,}', '\n\n', cleaned).strip()
 
 def enforce_sandbox_contracts(code_str: str) -> str:
-    """Enforces standard sandbox contracts: guarantees 'model.xlsx' and a matplotlib chart."""
+    """Standardizes Excel filenames to 'model.xlsx' and injects required modeling defaults."""
     clean_code = re.sub(r'ExcelWriter\s*\(\s*[\'"][^\'"]+\.xlsx[\'"]', 'ExcelWriter("model.xlsx"', code_str)
     clean_code = re.sub(r'\.to_excel\s*\(\s*[\'"][^\'"]+\.xlsx[\'"]', '.to_excel("model.xlsx"', clean_code)
 
@@ -102,29 +98,54 @@ def resolve_api_key(api_key: str = "") -> str:
     return os.environ.get("GROQ_API_KEY", "").strip()
 
 def get_best_available_model(client: Groq) -> str:
-    try:
-        all_models = [m.id for m in client.models.list().data]
-    except Exception:
-        all_models = []
+    """Finds a verified, active model without external terms restrictions."""
+    global CACHED_WORKING_MODEL
+    if CACHED_WORKING_MODEL:
+        return CACHED_WORKING_MODEL
 
-    valid_models = [
-        m for m in all_models 
-        if not any(b in m.lower() for b in ["guard", "whisper", "vision", "embed", "audio"])
-    ]
+    try:
+        all_ids = [m.id for m in client.models.list().data]
+    except Exception:
+        all_ids = []
+
+    # Exclude models with slashes (partner models requiring license terms) and non-text models
+    valid_candidates = []
+    for mid in all_ids:
+        mid_lower = mid.lower()
+        if "/" in mid:
+            continue
+        if any(b in mid_lower for b in ["guard", "whisper", "vision", "embed", "audio", "orpheus"]):
+            continue
+        valid_candidates.append(mid)
 
     priority = [
         "llama-3.3-70b-versatile",
         "llama-3.1-8b-instant",
         "llama-3.2-3b-preview",
+        "llama-3.2-1b-preview",
         "deepseek-r1-distill-llama-70b",
-        "mixtral-8x7b-32768"
+        "qwen-2.5-32b",
+        "mixtral-8x7b-32768",
+        "gemma2-9b-it"
     ]
 
-    for cand in priority:
-        if cand in valid_models:
-            return cand
+    ordered = [p for p in priority if p in valid_candidates] + [c for c in valid_candidates if c not in priority]
 
-    return valid_models[0] if valid_models else "llama-3.1-8b-instant"
+    # Pre-flight probe to ensure the model responds cleanly
+    for cand in ordered:
+        try:
+            client.chat.completions.create(
+                model=cand,
+                messages=[{"role": "user", "content": "ping"}],
+                max_tokens=1
+            )
+            CACHED_WORKING_MODEL = cand
+            return cand
+        except Exception:
+            continue
+
+    CACHED_WORKING_MODEL = "llama-3.1-8b-instant"
+    return CACHED_WORKING_MODEL
 
 def run_analyst_agent(
     user_input: str,
@@ -156,10 +177,7 @@ def run_analyst_agent(
     generated_excel = None
     tool_outputs = []
 
-    # --- STEP 1: Tool Execution ---
-    # For quantitative valuation requests, require python_interpreter so the LLM cannot skip it.
-    forced_choice = {"type": "function", "function": {"name": "python_interpreter"}} if is_valuation_query else "auto"
-
+    # --- STEP 1: Tool Execution Attempt ---
     tool_calling_succeeded = False
     try:
         response = client.chat.completions.create(
@@ -169,16 +187,17 @@ def run_analyst_agent(
                 {"role": "user", "content": user_input}
             ],
             tools=AGENT_TOOLS,
-            tool_choice=forced_choice,
+            tool_choice="auto",
             max_tokens=2048
         )
         msg = response.choices[0].message
 
-        # Direct response for non-valuation queries (e.g. "capital of China")
+        # Direct return for general inquiries
         if not getattr(msg, "tool_calls", None) and not is_valuation_query:
             elapsed = time.perf_counter() - start_time
             return sanitize_report_formatting(msg.content or ""), None, None, elapsed
 
+        # Handle tool execution
         if getattr(msg, "tool_calls", None):
             for tc in msg.tool_calls:
                 fn_name = tc.function.name
@@ -188,7 +207,7 @@ def run_analyst_agent(
                     args = {}
                 if fn_name == "python_interpreter":
                     if status_callback:
-                        status_callback("info", "Executing quantitative calculations & rendering charts...")
+                        status_callback("info", "Executing Python sandbox & generating charts...")
                     safe_code = enforce_sandbox_contracts(args.get("code", ""))
                     out, p_bytes, x_bytes = tool_python_interpreter(safe_code, hitl_enabled=hitl_enabled)
                     if p_bytes: generated_plot = p_bytes
@@ -201,12 +220,24 @@ def run_analyst_agent(
                     res = tool_web_search(args.get("query", ""))
                     tool_outputs.append(f"Search Results:\n{res}")
             tool_calling_succeeded = True
+        elif is_valuation_query:
+            # Check if code was returned directly in message body
+            inline_code = extract_code_from_markdown(msg.content or "")
+            if inline_code:
+                if status_callback:
+                    status_callback("info", "Executing model code & rendering charts...")
+                safe_code = enforce_sandbox_contracts(inline_code)
+                out, p_bytes, x_bytes = tool_python_interpreter(safe_code, hitl_enabled=hitl_enabled)
+                if p_bytes: generated_plot = p_bytes
+                if x_bytes: generated_excel = x_bytes
+                tool_outputs.append(f"Calculation Data:\n{out}")
+                tool_calling_succeeded = True
 
     except Exception as e:
         recovered = extract_code_from_error(str(e))
         if recovered:
             if status_callback:
-                status_callback("info", "Executing quantitative model...")
+                status_callback("info", "Executing recovered quantitative code...")
             safe_code = enforce_sandbox_contracts(recovered)
             out, p_bytes, x_bytes = tool_python_interpreter(safe_code, hitl_enabled=hitl_enabled)
             if p_bytes: generated_plot = p_bytes
@@ -214,18 +245,18 @@ def run_analyst_agent(
             tool_outputs.append(f"Calculation Data:\n{out}")
             tool_calling_succeeded = True
 
-    # --- STEP 2: Fallback (if tool calling was not triggered) ---
+    # --- STEP 2: Fallback Code Generation ---
     if is_valuation_query and not tool_outputs:
         if status_callback:
-            status_callback("info", "Generating quantitative valuation model...")
+            status_callback("info", "Synthesizing financial model & charts...")
 
         code_prompt = (
             f"{SYSTEM_PROMPT}\n\n"
             f"User request: {user_input}\n\n"
             "REQUIREMENTS:\n"
             "1. Write complete Python code to compute the DCF valuation.\n"
-            "2. Generate a clean visual plot with matplotlib (e.g. plt.figure(); plt.bar(...); plt.title(...)).\n"
-            "3. Export the model and sensitivity tables to Excel strictly as 'model.xlsx' using pd.ExcelWriter('model.xlsx', engine='openpyxl').\n"
+            "2. Generate a visual plot using matplotlib (e.g. plt.figure(); plt.bar(...); plt.tight_layout()).\n"
+            "3. Export the model to Excel strictly as 'model.xlsx' using pd.ExcelWriter('model.xlsx', engine='openpyxl').\n"
             "Wrap all code strictly inside ```python ... ``` fences."
         )
 
@@ -238,18 +269,18 @@ def run_analyst_agent(
             code = extract_code_from_markdown(resp.choices[0].message.content or "")
             if code:
                 if status_callback:
-                    status_callback("info", "Executing Python sandbox...")
+                    status_callback("info", "Running quantitative sandbox...")
                 safe_code = enforce_sandbox_contracts(code)
                 out, p_bytes, x_bytes = tool_python_interpreter(safe_code, hitl_enabled=hitl_enabled)
                 if p_bytes: generated_plot = p_bytes
                 if x_bytes: generated_excel = x_bytes
                 tool_outputs.append(f"Calculation Data:\n{out}")
         except Exception as e:
-            tool_outputs.append(f"Execution note: {e}")
+            tool_outputs.append(f"Sandbox note: {e}")
 
-    # --- STEP 3: Final Executive Synthesis ---
+    # --- STEP 3: Executive Valuation Briefing Synthesis ---
     if status_callback:
-        status_callback("info", "Formulating executive briefing...")
+        status_callback("info", "Generating executive valuation briefing...")
 
     combined_results = "\n\n".join(tool_outputs) if tool_outputs else ""
 
@@ -266,12 +297,12 @@ def run_analyst_agent(
                     "role": "user",
                     "content": (
                         f"User request: {user_input}\n\n"
-                        f"Sandbox Calculations:\n{combined_results}\n\n"
+                        f"Calculation Results from sandbox:\n{combined_results}\n\n"
                         "FORMAT INSTRUCTIONS:\n"
                         "- Provide an executive valuation summary and complete 5-Year Projection Table.\n"
                         "- Include the Terminal Value breakdown and Sensitivity Matrix.\n"
                         "- STRICT RULE: Do not output Python code blocks or imports.\n"
-                        "- STRICT RULE: Do not wrap numbers or phrases in backticks (`). Use standard text formatting."
+                        "- STRICT RULE: Do not wrap numbers or phrases in backticks (`). Use standard Markdown formatting."
                     )
                 }
             ],
