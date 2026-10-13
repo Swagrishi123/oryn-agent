@@ -3,32 +3,19 @@ import re
 import requests
 import yfinance as yf
 
-# Tool schemas maintained for reference
-AGENT_TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "get_financial_data",
-            "description": "Fetch real-time stock price, 52-week range, and market cap for Indian (NSE/BSE) and global equities.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "ticker": {
-                        "type": "string",
-                        "description": "Ticker symbol, e.g. RELIANCE, TCS, INFY, HDFCBANK, AAPL"
-                    }
-                },
-                "required": ["ticker"]
-            }
-        }
-    }
-]
-
 # 1. Verified Institutional Leadership Registry
 INSTITUTIONAL_LEADERSHIP = [
     {
         "triggers": [("rbi", "governor"), ("reserve bank", "governor"), ("central bank", "governor", "india")],
         "record": "The current Governor of the Reserve Bank of India (RBI) is Sanjay Malhotra. He is the 26th Governor of the RBI, having assumed office in December 2024 following the conclusion of Shaktikanta Das's tenure."
+    },
+    {
+        "triggers": [("west bengal", "governor"), ("governor", "bengal"), ("governor", "west bengal")],
+        "record": "The current Governor of West Bengal is Dr. C. V. Ananda Bose. He assumed office on 23 November 2022, succeeding Jagdeep Dhankhar (who resigned in July 2022 upon being elected Vice President of India, with La. Ganesan briefly holding additional charge until Bose took oath)."
+    },
+    {
+        "triggers": [("chief minister", "west bengal"), ("cm", "west bengal"), ("mamata", "banerjee")],
+        "record": "The Chief Minister of West Bengal is Mamata Banerjee, who has been in office since May 2011."
     },
     {
         "triggers": [("finance minister", "india"), ("union finance minister")],
