@@ -15,7 +15,7 @@ SYSTEM_PROMPT = (
     "CORE RULES:\n"
     "1. Respond naturally in the language used by the user.\n"
     "2. For general or conversational questions (e.g., 'Who is Abraham Lincoln?', 'Who is the founder of Meta?'), "
-    "answer directly and concisely. Do NOT invoke valuation models or tools.\n"
+    "answer directly and concisely in text. Do NOT invoke valuation models or tools.\n"
     "3. For valuation and DCF requests, ALWAYS execute python_interpreter to calculate cash flows, "
     "create a matplotlib chart, and write 'model.xlsx'.\n"
     "4. Output clean Markdown tables and executive summaries.\n"
@@ -27,6 +27,11 @@ VALUATION_KEYWORDS = [
     "dcf", "valuation", "wacc", "discount rate", "ebitda",
     "terminal growth", "sensitivity matrix", "financial model",
     "cash flow", "excel", "lbo", "irr", "npv", "unlevered"
+]
+
+MODEL_BLACKLIST = [
+    "guard", "whisper", "vision", "embed", "audio", "orpheus",
+    "allam", "arabic", "safeguard", "llama-3.3", "llama-3.1"
 ]
 
 CACHED_WORKING_MODEL = None
@@ -76,7 +81,7 @@ def resolve_api_key(api_key: str = "") -> str:
     return os.environ.get("GROQ_API_KEY", "").strip()
 
 def get_best_available_model(client: Groq, force_refresh: bool = False) -> str:
-    """Discovers an accessible model on the user's Groq key by ping-testing each candidate."""
+    """Finds a universally working production model on Groq, avoiding restricted 70B/preview models."""
     global CACHED_WORKING_MODEL
     if CACHED_WORKING_MODEL and not force_refresh:
         return CACHED_WORKING_MODEL
@@ -87,21 +92,17 @@ def get_best_available_model(client: Groq, force_refresh: bool = False) -> str:
     except Exception:
         available_ids = []
 
-    blacklist = ["guard", "whisper", "vision", "embed", "audio", "orpheus", "allam", "arabic", "safeguard"]
     candidates = [
         mid for mid in available_ids
-        if "/" not in mid and not any(b in mid.lower() for b in blacklist)
+        if "/" not in mid and not any(b in mid.lower() for b in MODEL_BLACKLIST)
     ]
 
-    # Universal production models available on all standard accounts
+    # Universal production models with 100% free-tier accessibility
     priority = [
         "llama3-8b-8192",
         "llama3-70b-8192",
         "mixtral-8x7b-32768",
-        "gemma2-9b-it",
-        "llama-3.3-70b-versatile",
-        "llama-3.2-3b-preview",
-        "llama-3.2-1b-preview"
+        "gemma2-9b-it"
     ]
 
     test_queue = [m for m in priority if m in candidates] + [m for m in candidates if m not in priority]
@@ -123,10 +124,16 @@ def get_best_available_model(client: Groq, force_refresh: bool = False) -> str:
     CACHED_WORKING_MODEL = "llama3-8b-8192"
     return CACHED_WORKING_MODEL
 
-def create_completion_with_fallback(client: Groq, status_callback=None, **kwargs):
-    """Executes Groq completions with automatic model failover if a 404/model_not_found occurs."""
+def create_completion_with_fallback(client: Groq, preferred_model: str = None, status_callback=None, **kwargs):
+    """Executes Groq completions with automatic model failover if a 404 occurs."""
     global CACHED_WORKING_MODEL
-    active_model = get_best_available_model(client)
+    
+    # Block blacklisted models even if explicitly passed from app.py
+    if preferred_model and not any(b in preferred_model.lower() for b in MODEL_BLACKLIST):
+        active_model = preferred_model
+    else:
+        active_model = get_best_available_model(client)
+        
     kwargs["model"] = active_model
 
     try:
@@ -164,7 +171,6 @@ def parse_prompt_financial_parameters(prompt: str) -> tuple[float, float, float,
     return base_rev, growth, margin, wacc, tg, 5
 
 def df_to_markdown_table(df: pd.DataFrame, include_index: bool = False) -> str:
-    """Generates standard Markdown tables with proper spacing and escaped currency symbols."""
     if include_index:
         headers = ["Parameter"] + [str(col) for col in df.columns]
         rows = [[str(idx)] + [str(val) for val in row] for idx, row in zip(df.index, df.values)]
@@ -320,11 +326,12 @@ def run_analyst_agent(
 
     is_valuation_query = any(k in user_input.lower() for k in VALUATION_KEYWORDS)
 
-    # 1. Direct answering for non-valuation queries (e.g., "Who is the founder of Meta?")
+    # 1. Non-valuation questions (e.g. "Who is Abraham Lincoln?", "Who is the founder of Meta?")
     if not is_valuation_query:
         try:
             resp = create_completion_with_fallback(
                 client=client,
+                preferred_model=selected_model,
                 status_callback=status_callback,
                 messages=[
                     {"role": "system", "content": SYSTEM_PROMPT},
@@ -348,6 +355,7 @@ def run_analyst_agent(
     try:
         response = create_completion_with_fallback(
             client=client,
+            preferred_model=selected_model,
             status_callback=status_callback,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
