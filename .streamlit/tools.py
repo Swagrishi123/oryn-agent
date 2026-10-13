@@ -46,7 +46,7 @@ INSTITUTIONAL_BENCHMARKS = {
 }
 
 def extract_core_entity(query: str) -> str:
-    """Strips conversational phrases to isolate the underlying search entity."""
+    """Strips conversational noise to isolate the underlying search entity."""
     clean = re.sub(
         r'(?i)\b(who is the founder of|who founded|founder of|founders of|who is the ceo of|ceo of|'
         r'who is the governor of|current governor of|governor of|who is the cm of|cm of|chief minister of|'
@@ -63,7 +63,6 @@ def fetch_wikipedia_entity_summary(entity: str) -> str | None:
     headers = {"User-Agent": "ORYNAnalyst/2.0 (Institutional BFSI Research; contact@oryn.ai)"}
     encoded_search = urllib.parse.quote_plus(entity)
     
-    # 1. Direct Page Extract
     try:
         url = (
             f"https://en.wikipedia.org/w/api.php?action=query&prop=extracts"
@@ -84,7 +83,6 @@ def fetch_wikipedia_entity_summary(entity: str) -> str | None:
     except Exception:
         pass
 
-    # 2. Search Fallback (if exact title match fails)
     try:
         search_url = f"https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch={encoded_search}&utf8=&format=json&srlimit=1"
         s_res = requests.get(search_url, headers=headers, timeout=3.0)
@@ -139,17 +137,11 @@ def fetch_google_news_rss(query: str, max_items: int = 3) -> str | None:
     return None
 
 def dynamic_web_search(query: str) -> str | None:
-    """
-    Stratified retrieval:
-    1. Intent-expanded news/filing search for recent appointments and executive changes.
-    2. General recent development headlines.
-    3. Encyclopedic background context from Wikipedia.
-    """
+    """Stratified retrieval across regulatory disclosures, news, and encyclopedic sources."""
     clean_entity = extract_core_entity(query)
     findings = []
     p_lower = query.lower()
 
-    # Detect if query seeks corporate leadership / executive governance
     leadership_keywords = [
         "chairman", "ceo", "md", "chief executive", "director",
         "head of", "head", "governor", "president", "management", "who is the"
@@ -157,18 +149,15 @@ def dynamic_web_search(query: str) -> str | None:
     is_leadership_query = any(k in p_lower for k in leadership_keywords)
 
     if is_leadership_query:
-        # Search specifically for regulatory appointment records and executive transitions
-        appointment_query = f"{clean_entity} CEO MD appointed OR takes charge OR assumed office"
-        appointment_intel = fetch_google_news_rss(appointment_query, max_items=3)
+        appointment_query = f"{clean_entity} Chairman OR CEO OR MD appointed OR \"takes charge\" OR \"assumed office\""
+        appointment_intel = fetch_google_news_rss(appointment_query, max_items=4)
         if appointment_intel:
-            findings.append(f"[OFFICIAL APPOINTMENTS & GAZETTE DISCLOSURES - PRIORITIZE OVER WIKIPEDIA]:\n{appointment_intel}")
+            findings.append(f"[OFFICIAL APPOINTMENTS & GAZETTE RECORDS]:\n{appointment_intel}")
 
-    # General recent news feed
     news_intel = fetch_google_news_rss(query, max_items=2)
     if news_intel and news_intel not in findings:
         findings.append(f"[RECENT REGULATORY & MEDIA HEADLINES]:\n{news_intel}")
 
-    # Encyclopedic background record
     wiki_intel = fetch_wikipedia_entity_summary(clean_entity)
     if wiki_intel:
         findings.append(wiki_intel)
@@ -241,7 +230,6 @@ def tool_get_financial_data(ticker: str) -> dict:
             gf_data = fetch_google_finance_metrics(clean_sym)
             mcap = gf_data.get("market_cap") if gf_data else None
             
-            # Dynamic market cap fallback via yfinance fast_info
             if not mcap:
                 try:
                     t = yf.Ticker(sym)
