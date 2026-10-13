@@ -3,8 +3,28 @@ import re
 import requests
 import yfinance as yf
 
+# Tool schemas maintained for reference
+AGENT_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "get_financial_data",
+            "description": "Fetch real-time stock price, 52-week range, and market cap for Indian (NSE/BSE) and global equities.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "ticker": {
+                        "type": "string",
+                        "description": "Ticker symbol, e.g. RELIANCE, TCS, INFY, HDFCBANK, AAPL"
+                    }
+                },
+                "required": ["ticker"]
+            }
+        }
+    }
+]
+
 # 1. Verified Institutional Leadership Registry
-# Eliminates reliance on Wikipedia job-description paragraphs
 INSTITUTIONAL_LEADERSHIP = [
     {
         "triggers": [("rbi", "governor"), ("reserve bank", "governor"), ("central bank", "governor", "india")],
@@ -67,12 +87,10 @@ INSTITUTIONAL_BENCHMARKS = {
 def fetch_institutional_officeholder_facts(query: str) -> str | None:
     """Matches macro officeholder queries against verified leadership registries."""
     q_lower = query.lower()
-
     for item in INSTITUTIONAL_LEADERSHIP:
         for trigger_tuple in item["triggers"]:
             if all(word in q_lower for word in trigger_tuple):
                 return f"[VERIFIED INSTITUTIONAL RECORD: {item['record']}]"
-
     return None
 
 def fetch_yahoo_v8_chart(symbol: str) -> dict | None:
