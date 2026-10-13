@@ -1,6 +1,10 @@
 import streamlit as st
-import io, re, base64, datetime
-import importlib, sys
+import io
+import re
+import base64
+import datetime
+import importlib
+import sys
 
 # Force Streamlit Cloud to reload agent.py from disk instead of RAM
 if "agent" in sys.modules:
@@ -59,9 +63,9 @@ with st.sidebar:
 
     active_model = st.selectbox(
         "Reasoning Engine:",
-        options=["llama-3.1-8b-instant"],
+        options=["qwen/qwen3.8-27b", "llama-3.1-8b-instant"],
         index=0,
-        help="Ultra-fast, stable institutional engine"
+        help="Institutional quantitative reasoning engines"
     )
     hitl_enabled = st.toggle("🛡️ HITL Safety Guardrails", value=True)
 
@@ -111,6 +115,57 @@ def build_html_report(text: str, plot_bytes: bytes | None) -> str:
 </body>
 </html>"""
 
+def render_download_suite(text: str, plot_bytes: bytes | None, excel_bytes: bytes | None, key_prefix: str):
+    """Dynamically creates responsive download buttons for all available artifacts."""
+    buttons = []
+    
+    # 1. Plain text institutional memo (always available)
+    buttons.append({
+        "label": "📥 Download Memo (.txt)",
+        "data": text,
+        "file_name": f"ORYN_Institutional_Memo_{key_prefix}.txt",
+        "mime": "text/plain"
+    })
+    
+    # 2. Formatted HTML Executive Brief (always available)
+    html_doc = build_html_report(text, plot_bytes)
+    buttons.append({
+        "label": "📑 Download Report (.html)",
+        "data": html_doc,
+        "file_name": f"ORYN_Report_{key_prefix}.html",
+        "mime": "text/html"
+    })
+    
+    # 3. Chart artifact (if generated)
+    if plot_bytes:
+        buttons.append({
+            "label": "📊 Download Chart (.png)",
+            "data": plot_bytes,
+            "file_name": f"ORYN_Chart_{key_prefix}.png",
+            "mime": "image/png"
+        })
+        
+    # 4. Financial Model Workbook (if generated)
+    if excel_bytes:
+        buttons.append({
+            "label": "📗 Financial Model (.xlsx)",
+            "data": excel_bytes,
+            "file_name": f"ORYN_Model_{key_prefix}.xlsx",
+            "mime": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        })
+
+    cols = st.columns(len(buttons))
+    for i, btn in enumerate(buttons):
+        with cols[i]:
+            st.download_button(
+                label=btn["label"],
+                data=btn["data"],
+                file_name=btn["file_name"],
+                mime=btn["mime"],
+                key=f"dl_{key_prefix}_{i}",
+                use_container_width=True
+            )
+
 # --- Render Chat History ---
 for idx, msg in enumerate(st.session_state.messages):
     with st.chat_message(msg.get("role", "assistant")):
@@ -118,16 +173,13 @@ for idx, msg in enumerate(st.session_state.messages):
         if msg.get("image"):
             st.image(msg["image"], caption="Generated Visual Artifact", use_container_width=True)
             
-        c_dl = st.columns(3)
-        if msg.get("image"):
-            with c_dl[0]:
-                st.download_button("📊 Download Chart (.png)", msg["image"], f"chart_{idx}.png", "image/png", key=f"dl_p_{idx}", use_container_width=True)
-            with c_dl[1]:
-                html_doc = build_html_report(msg.get("content", ""), msg["image"])
-                st.download_button("📑 Download Report (.html)", html_doc, f"report_{idx}.html", "text/html", key=f"dl_h_{idx}", use_container_width=True)
-        if msg.get("excel"):
-            with c_dl[2]:
-                st.download_button("📗 Financial Model (.xlsx)", msg["excel"], f"model_{idx}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key=f"dl_x_{idx}", use_container_width=True)
+        if msg.get("role") == "assistant":
+            render_download_suite(
+                text=msg.get("content", ""),
+                plot_bytes=msg.get("image"),
+                excel_bytes=msg.get("excel"),
+                key_prefix=f"hist_{idx}"
+            )
 
 # --- User Input & Agent Orchestration ---
 user_input = st.chat_input("Ask ORYN Analyst...")
@@ -165,17 +217,13 @@ if user_input:
             if generated_plot:
                 st.image(generated_plot, caption="Generated Visual Artifact", use_container_width=True)
 
-            cd = st.columns(3)
-            msg_count = len(st.session_state.messages)
-            if generated_plot:
-                with cd[0]:
-                    st.download_button("📊 Download Chart (.png)", generated_plot, "oryn_chart.png", "image/png", key=f"live_p_{msg_count}", use_container_width=True)
-                with cd[1]:
-                    html_report = build_html_report(final_text, generated_plot)
-                    st.download_button("📑 Download Report (.html)", html_report, "oryn_report.html", "text/html", key=f"live_h_{msg_count}", use_container_width=True)
-            if generated_excel:
-                with cd[2]:
-                    st.download_button("📗 Financial Model (.xlsx)", generated_excel, "oryn_model.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key=f"live_x_{msg_count}", use_container_width=True)
+            msg_idx = len(st.session_state.messages)
+            render_download_suite(
+                text=final_text,
+                plot_bytes=generated_plot,
+                excel_bytes=generated_excel,
+                key_prefix=f"live_{msg_idx}"
+            )
 
             st.session_state.messages.append({
                 "role": "assistant",
