@@ -46,7 +46,7 @@ INSTITUTIONAL_BENCHMARKS = {
 }
 
 def extract_core_entity(query: str) -> str:
-    """Strips conversational noise and corrects common spellings to isolate the entity."""
+    """Strips conversational noise and standardizes state names."""
     clean = re.sub(
         r'(?i)\b(who is the current|who is the latest|who is the|current|latest|who was the|who was|'
         r'founder of|founders of|who founded|ceo of|governor of|cm of|chief minister of|president of|'
@@ -55,13 +55,13 @@ def extract_core_entity(query: str) -> str:
         query
     )
     clean = re.sub(r'[,?!\'\"]', '', clean).strip()
-    # Correct common entity misspellings
     clean = re.sub(r'(?i)\bmaharastra\b', 'Maharashtra', clean)
     clean = re.sub(r'(?i)\bbengal\b', 'West Bengal', clean)
+    clean = re.sub(r'(?i)\btamilnadu\b', 'Tamil Nadu', clean)
     return clean if len(clean) >= 2 else query.strip()
 
 def fetch_wikipedia_entity_summary(entity: str) -> str | None:
-    """Queries Wikipedia Action API for baseline encyclopedic records."""
+    """Queries Wikipedia Action API for verified incumbency and encyclopedic records."""
     headers = {"User-Agent": "ORYNAnalyst/2.0 (Institutional BFSI Research; contact@oryn.ai)"}
     encoded_search = urllib.parse.quote_plus(entity)
     
@@ -78,10 +78,10 @@ def fetch_wikipedia_entity_summary(entity: str) -> str | None:
                     extract = page_data.get("extract", "").strip()
                     title = page_data.get("title", entity)
                     if extract and len(extract) > 30:
-                        summary = ". ".join(extract.split(". ")[:3]).strip()
+                        summary = ". ".join(extract.split(". ")[:4]).strip()
                         if not summary.endswith("."):
                             summary += "."
-                        return f"• [Wikipedia Background Record - {title}]: {summary}"
+                        return f"• [Official Encyclopedia Record - {title}]: {summary}"
     except Exception:
         pass
 
@@ -105,17 +105,17 @@ def fetch_wikipedia_entity_summary(entity: str) -> str | None:
                             if pid != "-1":
                                 sub_extract = pdata.get("extract", "").strip()
                                 if sub_extract and len(sub_extract) > 30:
-                                    summary = ". ".join(sub_extract.split(". ")[:3]).strip()
+                                    summary = ". ".join(sub_extract.split(". ")[:4]).strip()
                                     if not summary.endswith("."):
                                         summary += "."
-                                    return f"• [Wikipedia Background Record - {found_title}]: {summary}"
+                                    return f"• [Official Encyclopedia Record - {found_title}]: {summary}"
     except Exception:
         pass
 
     return None
 
 def fetch_google_news_rss(query: str, max_items: int = 3) -> str | None:
-    """Queries news RSS syndication feeds for timestamped developments and filings."""
+    """Queries news RSS syndication feeds, filtering out speculation and campaign buzz."""
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0 Safari/537.36"}
     encoded_q = urllib.parse.quote_plus(query.strip())
     rss_url = f"https://news.google.com/rss/search?q={encoded_q}&hl=en-IN&gl=IN&ceid=IN:en"
@@ -125,13 +125,17 @@ def fetch_google_news_rss(query: str, max_items: int = 3) -> str | None:
             root = ET.fromstring(res.content)
             items = root.findall("./channel/item")
             snippets = []
-            for item in items[:max_items]:
+            speculative_terms = ["opinion", "speculation", "rally", "claims", "campaign", "poll", "will become"]
+            for item in items:
                 title = item.findtext("title", "").strip()
                 pub_date = item.findtext("pubDate", "").strip()
                 clean_title = re.sub(r' - [^-]+$', '', title)
-                if clean_title:
+                # Filter out obvious speculative opinion articles
+                if clean_title and not any(term in clean_title.lower() for term in speculative_terms):
                     date_prefix = f"[{pub_date[:16]}] " if pub_date else ""
                     snippets.append(f"• {date_prefix}{clean_title}")
+                if len(snippets) >= max_items:
+                    break
             if snippets:
                 return "\n".join(snippets)
     except Exception:
@@ -139,37 +143,56 @@ def fetch_google_news_rss(query: str, max_items: int = 3) -> str | None:
     return None
 
 def dynamic_web_search(query: str) -> str | None:
-    """Stratified retrieval distinguishing between political and corporate governance."""
+    """Stratified retrieval: targets verified incumbency registries and official gazettes first."""
     clean_entity = extract_core_entity(query)
     findings = []
     p_lower = query.lower()
 
-    # 1. Political Leadership (Chief Minister, Governor, Prime Minister)
-    is_political = any(k in p_lower for k in ["cm", "chief minister", "governor", "prime minister", "pm", "minister"])
-    
-    # 2. Corporate Governance (Chairman, CEO, MD, Director)
+    is_cm = any(k in p_lower for k in ["cm", "chief minister"])
+    is_governor = "governor" in p_lower
     is_corporate = any(k in p_lower for k in ["chairman", "ceo", "md", "chief executive", "director", "head of", "head"])
 
-    if is_political:
-        pol_query = f"{clean_entity} Chief Minister OR CM \"takes oath\" OR \"sworn in\" OR current"
-        pol_intel = fetch_google_news_rss(pol_query, max_items=4)
-        if pol_intel:
-            findings.append(f"[OFFICIAL POLITICAL & GAZETTE RECORDS]:\n{pol_intel}")
+    if is_cm:
+        # 1. Target verified incumbency registers directly
+        cm_wiki = fetch_wikipedia_entity_summary(f"List of chief ministers of {clean_entity}")
+        if not cm_wiki:
+            cm_wiki = fetch_wikipedia_entity_summary(f"Chief Minister of {clean_entity}")
+        if cm_wiki:
+            findings.append(cm_wiki)
+
+        # 2. Query official oath and cabinet appointment records
+        pol_news = fetch_google_news_rss(f"\"{clean_entity}\" \"Chief Minister\" \"sworn in\" OR \"takes oath\"", max_items=2)
+        if pol_news:
+            findings.append(f"[OFFICIAL OATH & CABINET DISCLOSURES]:\n{pol_news}")
+
+    elif is_governor:
+        gov_wiki = fetch_wikipedia_entity_summary(f"List of governors of {clean_entity}")
+        if not gov_wiki:
+            gov_wiki = fetch_wikipedia_entity_summary(f"Governor of {clean_entity}")
+        if gov_wiki:
+            findings.append(gov_wiki)
+
+        gov_news = fetch_google_news_rss(f"\"{clean_entity}\" \"Governor\" \"sworn in\"", max_items=2)
+        if gov_news:
+            findings.append(f"[OFFICIAL OATH & CABINET DISCLOSURES]:\n{gov_news}")
+
     elif is_corporate:
-        appointment_query = f"{clean_entity} Chairman OR CEO OR MD appointed OR \"takes charge\" OR \"assumed office\""
-        appointment_intel = fetch_google_news_rss(appointment_query, max_items=4)
-        if appointment_intel:
-            findings.append(f"[OFFICIAL APPOINTMENTS & GAZETTE RECORDS]:\n{appointment_intel}")
+        appointment_news = fetch_google_news_rss(f"{clean_entity} CEO OR MD OR Chairman appointed OR \"takes charge\"", max_items=3)
+        if appointment_news:
+            findings.append(f"[OFFICIAL APPOINTMENTS & GAZETTE RECORDS]:\n{appointment_news}")
 
-    # General media headlines fallback
-    news_intel = fetch_google_news_rss(f"{clean_entity} current", max_items=2)
-    if news_intel and news_intel not in findings:
-        findings.append(f"[RECENT MEDIA HEADLINES]:\n{news_intel}")
+        corp_wiki = fetch_wikipedia_entity_summary(clean_entity)
+        if corp_wiki:
+            findings.append(corp_wiki)
 
-    # Wikipedia summary fallback
-    wiki_intel = fetch_wikipedia_entity_summary(clean_entity)
-    if wiki_intel:
-        findings.append(wiki_intel)
+    else:
+        news_intel = fetch_google_news_rss(f"{clean_entity} current", max_items=2)
+        if news_intel:
+            findings.append(f"[RECENT MEDIA HEADLINES]:\n{news_intel}")
+
+        wiki_intel = fetch_wikipedia_entity_summary(clean_entity)
+        if wiki_intel:
+            findings.append(wiki_intel)
 
     if findings:
         return "\n\n".join(findings)
