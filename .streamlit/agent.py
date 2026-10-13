@@ -12,14 +12,8 @@ SYSTEM_PROMPT = (
     "1. For general or conversational questions (e.g. 'What is the capital of China?'), "
     "answer directly and concisely in text. Do NOT run valuation models or tools.\n"
     "2. For valuation and DCF requests, you MUST execute python_interpreter. "
-    "NEVER write valuation formulas or estimate DCF numbers in text without running code.\n"
-    "3. PYTHON CODING RULES FOR SANDBOX:\n"
-    "   - Write simple, clean, linear procedural Python. No complex nested list comprehensions.\n"
-    "   - Explicitly define ALL parameters at the top (base_revenue, growth_rate, ebitda_margin, wacc, terminal_growth, years = 5).\n"
-    "   - Always import pandas as pd, numpy as np, and matplotlib.pyplot as plt.\n"
-    "   - ALWAYS create a visual plot using plt.figure() and save it.\n"
-    "   - ALWAYS save the model to 'model.xlsx' using pd.ExcelWriter('model.xlsx', engine='openpyxl').\n"
-    "4. Output clean Markdown tables and executive summaries.\n"
+    "Never estimate numbers or write valuation formulas in text without running code.\n"
+    "3. Output clean Markdown tables and executive summaries.\n"
     "   - NEVER use backticks (`) around currency, numbers, or phrases.\n"
     "   - Format currency values as '$346M' or '346 million USD'."
 )
@@ -31,13 +25,6 @@ VALUATION_KEYWORDS = [
 ]
 
 CACHED_WORKING_MODEL = None
-
-def clean_extracted_code(raw_code: str) -> str:
-    clean = raw_code.replace('\\\\n', '\n').replace('\\n', '\n')
-    clean = clean.replace(r'\"', '"').replace(r"\'", "'").replace(r'\\', '\\')
-    lines = clean.split('\n')
-    valid = [l for l in lines if l.strip() not in ['PY', 'PY"', '}', '}}', '```', '```python']]
-    return '\n'.join(valid).strip()
 
 def extract_code_from_markdown(text: str) -> str | None:
     m = re.search(r'```python\s*(.*?)\s*```', text, re.DOTALL)
@@ -57,7 +44,7 @@ def sanitize_report_formatting(text: str) -> str:
     return re.sub(r'\n{3,}', '\n\n', cleaned).strip()
 
 def enforce_sandbox_contracts(code_str: str) -> str:
-    # Ensure Excel output is always redirected to model.xlsx
+    # Ensure Excel output always points to model.xlsx
     clean_code = re.sub(r'ExcelWriter\s*\(\s*[\'"][^\'"]+\.xlsx[\'"]', 'ExcelWriter("model.xlsx"', code_str)
     clean_code = re.sub(r'\.to_excel\s*\(\s*[\'"][^\'"]+\.xlsx[\'"]', '.to_excel("model.xlsx"', clean_code)
 
@@ -93,16 +80,11 @@ def get_best_available_model(client: Groq) -> str:
     except Exception:
         all_ids = []
 
-    valid_candidates = []
-    for mid in all_ids:
-        mid_lower = mid.lower()
-        if "/" in mid:
-            continue
-        if any(b in mid_lower for b in ["guard", "whisper", "vision", "embed", "audio", "orpheus"]):
-            continue
-        valid_candidates.append(mid)
+    valid_candidates = [
+        mid for mid in all_ids
+        if "/" not in mid and not any(b in mid.lower() for b in ["guard", "whisper", "vision", "embed", "audio", "orpheus"])
+    ]
 
-    # Prefer 70B models for code generation accuracy
     priority = [
         "llama-3.3-70b-versatile",
         "llama-3.1-70b-versatile",
@@ -134,14 +116,13 @@ def execute_with_self_healing(client: Groq, model: str, initial_code: str, hitl_
     safe_code = enforce_sandbox_contracts(initial_code)
     out, p_bytes, x_bytes = tool_python_interpreter(safe_code, hitl_enabled=hitl_enabled)
 
-    # If runtime or syntax error occurs, execute self-healing pass
     if "Python Execution Error" in out or "Error:" in out:
         if status_callback:
             status_callback("info", "Self-healing: fixing script syntax in sandbox...")
         repair_prompt = (
             f"The following Python script threw an error:\n{out}\n\n"
             f"Script:\n```python\n{safe_code}\n```\n\n"
-            "Fix the syntax error. Make sure all parentheses match. "
+            "Fix the syntax error. Make sure all parentheses and brackets match. "
             "Ensure it saves a matplotlib plot and exports 'model.xlsx'. "
             "Return ONLY the fixed code inside ```python ... ```."
         )
@@ -186,11 +167,7 @@ def run_analyst_agent(
 
     is_valuation_query = any(k in user_input.lower() for k in VALUATION_KEYWORDS)
 
-    generated_plot = None
-    generated_excel = None
-    tool_outputs = []
-
-    # If general question (e.g. "capital of China"), answer directly without running tools
+    # 1. Non-quantitative requests (e.g. "capital of China")
     if not is_valuation_query:
         try:
             resp = client.chat.completions.create(
@@ -206,12 +183,17 @@ def run_analyst_agent(
         except Exception as e:
             return f"Error: {e}", None, None, time.perf_counter() - start_time
 
-    # --- QUANTITATIVE VALUATION PIPELINE ---
-    # Lock tool choice to python_interpreter so the LLM cannot skip code execution
+    # 2. Quantitative valuation pipeline
+    generated_plot = None
+    generated_excel = None
+    tool_outputs = []
+
     if status_callback:
         status_callback("info", "Executing quantitative calculations & rendering charts...")
 
     tool_executed = False
+
+    # Attempt 1: Native Groq tool calling with tool_choice="required"
     try:
         response = client.chat.completions.create(
             model=active_model,
@@ -220,7 +202,7 @@ def run_analyst_agent(
                 {"role": "user", "content": user_input}
             ],
             tools=AGENT_TOOLS,
-            tool_choice={"type": "function", "function": {"name": "python_interpreter"}},
+            tool_choice="required",
             max_tokens=2048
         )
         msg = response.choices[0].message
@@ -241,26 +223,35 @@ def run_analyst_agent(
     except Exception:
         tool_executed = False
 
-    # Deterministic Fallback if tool calling was rejected by API
+    # Attempt 2: Strict isolated Python generator fallback
     if not tool_executed or not tool_outputs:
         if status_callback:
             status_callback("info", "Synthesizing quantitative Python model...")
-        code_prompt = (
-            f"Write standalone, linear Python code to compute this valuation model:\n{user_input}\n\n"
-            "REQUIREMENTS:\n"
-            "1. Calculate Year 1-5 Revenue, EBITDA, UFCF, and Discounted UFCF.\n"
-            "2. Calculate Terminal Value and Implied Enterprise Value.\n"
-            "3. Calculate a sensitivity matrix (WACC vs Terminal Growth).\n"
-            "4. Create a Matplotlib bar chart (plt.figure(); plt.bar(['PV of Cash Flows', 'PV of Terminal Value'], [pv_ufcf, pv_tv]); plt.title('Valuation Breakdown ($M)'); plt.tight_layout()).\n"
-            "5. Export projections and sensitivity tables to 'model.xlsx' using pd.ExcelWriter('model.xlsx', engine='openpyxl').\n"
-            "6. Print the summary numbers.\n"
-            "Output ONLY the Python code wrapped in ```python ... ```."
+
+        pure_code_prompt = (
+            f"Write a standalone, self-contained Python script to calculate this financial model:\n"
+            f"{user_input}\n\n"
+            "CRITICAL INSTRUCTIONS:\n"
+            "1. Define parameters: base_revenue, growth_rate, ebitda_margin, wacc, terminal_growth, years = 5.\n"
+            "2. Project Revenues, EBITDAs, and discount them by (1 + wacc)**t to get PV of UFCF.\n"
+            "3. Calculate Terminal Value using Gordon Growth and discount it to present value.\n"
+            "4. Calculate Implied Enterprise Value = sum(PV of UFCF) + PV of Terminal Value.\n"
+            "5. Build a sensitivity matrix varying WACC and Terminal Growth.\n"
+            "6. Generate a matplotlib bar chart (plt.figure(); plt.bar(['PV of Cash Flows', 'PV of Terminal Value'], [pv_sum, pv_tv]); plt.title('Valuation Breakdown ($M)'); plt.tight_layout()).\n"
+            "7. Save the model and sensitivity matrix to 'model.xlsx' using pd.ExcelWriter('model.xlsx', engine='openpyxl').\n"
+            "8. Print the projection table and summary values.\n"
+            "OUTPUT STRICTLY ONLY PYTHON CODE INSIDE ```python ... ```."
         )
+
         try:
             resp = client.chat.completions.create(
                 model=active_model,
-                messages=[{"role": "user", "content": code_prompt}],
-                max_tokens=2048
+                messages=[
+                    {"role": "system", "content": "You are a Python code generator. Output ONLY Python code inside ```python ``` blocks. Do not write explanations."},
+                    {"role": "user", "content": pure_code_prompt}
+                ],
+                max_tokens=2048,
+                temperature=0.1
             )
             code = extract_code_from_markdown(resp.choices[0].message.content or "")
             if code:
@@ -271,11 +262,15 @@ def run_analyst_agent(
         except Exception as e:
             tool_outputs.append(f"Execution note: {e}")
 
-    # --- EXECUTIVE SYNTHESIS BRIEFING ---
+    # 3. Final Executive Briefing Synthesis
+    if not tool_outputs:
+        elapsed = time.perf_counter() - start_time
+        return "⚠️ **Execution Error**: Could not execute Python calculations. Please try again.", None, None, elapsed
+
     if status_callback:
         status_callback("info", "Formulating executive valuation briefing...")
 
-    combined_results = "\n\n".join(tool_outputs) if tool_outputs else "Calculations completed."
+    combined_results = "\n\n".join(tool_outputs)
 
     try:
         synth = client.chat.completions.create(
@@ -289,7 +284,7 @@ def run_analyst_agent(
                         f"Deterministic sandbox calculations:\n{combined_results}\n\n"
                         "BRIEFING REQUIREMENTS:\n"
                         "- Provide an executive valuation summary.\n"
-                        "- Include the 5-Year Projection Table, Terminal Value breakdown, and Sensitivity Matrix in Markdown tables.\n"
+                        "- Include the 5-Year Projection Table, Terminal Value breakdown, and Sensitivity Matrix in clean Markdown tables.\n"
                         "- Use ONLY the calculated numbers from the sandbox.\n"
                         "- DO NOT output Python code, scripts, or imports.\n"
                         "- DO NOT wrap numbers or sentences in backticks (`)."
