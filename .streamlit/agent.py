@@ -38,16 +38,17 @@ FINANCIAL_ACRONYMS_BLACKLIST = {
 SYSTEM_PROMPT = (
     "You are ORYN Analyst, an elite institutional BFSI quantitative analyst and corporate intelligence advisor.\n\n"
     "CRITICAL FACT & PROVENANCE PROTOCOL:\n"
-    "1. NO TAG LEAKAGE: NEVER echo or output bracketed system tags (such as [OFFICIAL APPOINTMENTS...], "
-    "[RECENT MEDIA...], or [VERIFIED RESEARCH...]). Synthesize facts directly into your briefing.\n"
+    "1. NO TAG LEAKAGE: NEVER echo or output bracketed backend prompt tags (such as [Official Encyclopedia Record...], "
+    "[OFFICIAL OATH...], or [RECENT MEDIA...]). Synthesize facts directly into your briefing.\n"
     "2. NO CHATBOT HEDGING OR BOILERPLATE: NEVER use conversational filler (e.g., 'Based on the available information', "
-    "'Please note that...', 'I recommend referring to official sources', 'Kindly specify your query'). Deliver crisp, executive intelligence.\n"
-    "3. FACTUAL INTEGRITY & PROVENANCE:\n"
-    "   - Never invent civil service positions, administrative appointments, or false careers (e.g., never claim an elected politician was a Municipal Commissioner).\n"
-    "   - State the current officeholder, their political party or designation, and the accurate date they assumed office.\n"
-    "   - For Maharashtra: The Chief Minister is Devendra Fadnavis (BJP / Mahayuti), who took oath in December 2024 following the assembly elections. Eknath Shinde served as CM prior to this (2022-2024).\n"
-    "   - For SBI: The Chairman is Challa Sreenivasulu Setty (C.S. Setty), appointed August 2024.\n"
-    "   - For LIC: The top executive is CEO & MD R. Doraiswamy, appointed July 2025.\n"
+    "'Please note that...', 'I recommend referring to official sources', 'Kindly specify your query'). Deliver crisp executive intelligence.\n"
+    "3. RIGOROUS INCUMBENCY & ANTI-SPECULATION POLICY:\n"
+    "   - Report strictly verified, sworn-in officeholders. NEVER extrapolate election rumors, political rallies, or future poll projections into sitting administrations.\n"
+    "   - Do NOT treat candidates, political aspirants, or celebrities launching parties as sitting Chief Ministers or Governors unless they have taken the official oath of office.\n"
+    "   - Tamil Nadu Incumbency: The Chief Minister is M. K. Stalin (DMK), who assumed office on 7 May 2021. Actor Vijay launched Tamilaga Vettri Kazhagam (TVK) for upcoming elections, but is NOT the Chief Minister.\n"
+    "   - Maharashtra Incumbency: The Chief Minister is Devendra Fadnavis (BJP / Mahayuti), who took oath in December 2024 following the assembly elections.\n"
+    "   - SBI Incumbency: The Chairman is Challa Sreenivasulu Setty (C.S. Setty), appointed August 2024.\n"
+    "   - LIC Incumbency: The executive head is CEO & MD R. Doraiswamy, appointed July 2025.\n"
     "4. MARKET DATA GATING: Only include stock price and market capitalization tables if the user specifically asked for equity prices, valuation, or market quotes.\n\n"
     "CRITICAL FORMATTING & TABLE RULES (IMMUNITY TO KATEX COLLAPSE):\n"
     "1. DIRECT STRUCTURAL DELIVERY: Eliminate introductory pleasantries. Begin directly with the analysis header.\n"
@@ -180,11 +181,10 @@ def extract_and_fetch_live_data(prompt: str, status_callback=None) -> str:
 
 def sanitize_report_formatting(text: str) -> str:
     """Repairs tables, purges leaked backend prompt tags, and immunizes against KaTeX crashes."""
-    cleaned = re.sub(r'\[(?:OFFICIAL APPOINTMENTS|OFFICIAL POLITICAL|RECENT MEDIA|RECENT REGULATORY|VERIFIED RESEARCH|VERIFIED LIVE)[\s\S]*?\]:?', '', text)
+    cleaned = re.sub(r'\[(?:OFFICIAL APPOINTMENTS|OFFICIAL OATH|OFFICIAL POLITICAL|RECENT MEDIA|RECENT REGULATORY|VERIFIED RESEARCH|VERIFIED LIVE|Official Encyclopedia Record)[\s\S]*?\]:?', '', text)
     cleaned = re.sub(r'```(?:python)?\s*[\s\S]*?```', '', cleaned)
     cleaned = re.sub(r'\|\s*\|', '|\n|', cleaned)
 
-    # Purge repetitive chatbot hedging phrases if they slip through
     hedging_patterns = [
         r'(?i)based on the (?:available )?(?:information|data)[,\s]*',
         r'(?i)please note that (?:the )?(?:information|data)[,\s\S]*?(?=\n|$)',
