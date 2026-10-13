@@ -13,10 +13,10 @@ from sandbox import tool_python_interpreter
 SYSTEM_PROMPT = (
     "You are ORYN Analyst, an elite institutional BFSI quantitative analyst and investment banking advisor.\n\n"
     "CRITICAL MARKET DATA RULE:\n"
-    "- When [VERIFIED LIVE EXCHANGE DATA] is provided in the context, you MUST use those exact prices, market caps, and metrics.\n"
-    "- Never invent or hallucinate approximate figures when live data is provided.\n\n"
+    "- When [LIVE EXCHANGE DATA] is provided, you MUST construct the analysis around those exact metrics.\n"
+    "- NEVER refuse a user by saying 'I do not have real-time market data'. If data is present, analyze it directly.\n\n"
     "CRITICAL FORMATTING & STRUCTURAL RULES:\n"
-    "1. DIRECT STRUCTURAL DELIVERY: Eliminate introductory greetings, pleasantries, and meta-commentary. "
+    "1. DIRECT STRUCTURAL DELIVERY: Eliminate all introductory greetings, pleasantries, and meta-commentary. "
     "Begin immediately with the report title.\n"
     "2. STRICT MARKDOWN TABLE SYNTAX:\n"
     "   - Every table row MUST be separated by an actual newline (\\n) and start/end with a pipe (|).\n"
@@ -42,7 +42,6 @@ SYSTEM_PROMPT = (
 
 CACHED_WORKING_MODEL = None
 
-# Known entity dictionary for Indian & Global market resolution
 KNOWN_ENTITIES = {
     "reliance": "RELIANCE",
     "tcs": "TCS",
@@ -64,21 +63,18 @@ KNOWN_ENTITIES = {
     "microsoft": "MSFT",
     "nvidia": "NVDA",
     "google": "GOOGL",
-    "tesla": "TSLA",
-    "amazon": "AMZN"
+    "tesla": "TSLA"
 }
 
 def extract_and_fetch_live_data(prompt: str, status_callback=None) -> str:
-    """Pre-detects company names or ticker symbols and retrieves live exchange metrics."""
+    """Pre-detects company names/tickers and retrieves live exchange metrics."""
     found_tickers = set()
     p_lower = prompt.lower()
 
-    # 1. Match company names from dictionary
     for name, sym in KNOWN_ENTITIES.items():
         if re.search(r'\b' + re.escape(name) + r'\b', p_lower):
             found_tickers.add(sym)
 
-    # 2. Match raw uppercase ticker patterns (e.g., RELIANCE, TCS, INFY)
     raw_candidates = re.findall(r'\b[A-Z]{2,10}\b', prompt)
     ignored = {"USD", "INR", "NSE", "BSE", "PE", "EV", "DIP", "EBITDA", "FCF", "APR", "LBO", "DCF", "WACC", "TCE", "NIM"}
     for c in raw_candidates:
@@ -91,20 +87,28 @@ def extract_and_fetch_live_data(prompt: str, status_callback=None) -> str:
     results = []
     for ticker in found_tickers:
         if status_callback:
-            status_callback("info", f"Retrieving live NSE/BSE metrics for {ticker}...")
+            status_callback("info", f"Fetching live NSE/BSE metrics for {ticker}...")
         try:
             data = tool_get_financial_data(ticker)
             if "error" not in data:
+                price = data.get("current_price")
+                mcap = data.get("market_cap")
+                high = data.get("52w_high")
+                low = data.get("52w_low")
+                resolved = data.get("ticker_resolved")
+                
+                if status_callback:
+                    status_callback("info", f"✅ Retrieved {ticker} live price: {price}")
+                
                 results.append(
-                    f"- Company: {data.get('company_name', ticker)} ({data.get('ticker_resolved')}) | "
-                    f"Current Price: {data.get('current_price')} | Market Cap: {data.get('market_cap')} | "
-                    f"P/E Ratio: {data.get('pe_ratio')} | 52W High: {data.get('52w_high')} | 52W Low: {data.get('52w_low')}"
+                    f"- Company: {ticker} ({resolved}) | Price: {price} | Market Cap: {mcap} | "
+                    f"52W High: {high} | 52W Low: {low}"
                 )
         except Exception:
             continue
 
     if results:
-        return "\n\n[VERIFIED LIVE EXCHANGE DATA - USE THESE EXACT VALUES IN YOUR ANALYSIS]:\n" + "\n".join(results) + "\n"
+        return "\n\n[LIVE EXCHANGE DATA - MANDATORY REFERENCE FOR ANALYSIS]:\n" + "\n".join(results) + "\n\n"
     return ""
 
 def is_quantitative_model_request(prompt: str) -> bool:
@@ -132,12 +136,7 @@ def sanitize_report_formatting(text: str) -> str:
 def enforce_sandbox_contracts(code_str: str) -> str:
     clean_code = re.sub(r'ExcelWriter\s*\(\s*[\'"][^\'"]+\.xlsx[\'"]', 'ExcelWriter("model.xlsx"', code_str)
     clean_code = re.sub(r'\.to_excel\s*\(\s*[\'"][^\'"]+\.xlsx[\'"]', '.to_excel("model.xlsx"', clean_code)
-    preamble = (
-        "import numpy as np\n"
-        "import pandas as pd\n"
-        "import matplotlib.pyplot as plt\n"
-        "years = 5\n"
-    )
+    preamble = "import numpy as np\nimport pandas as pd\nimport matplotlib.pyplot as plt\nyears = 5\n"
     return preamble + "\n" + clean_code
 
 def resolve_api_key(api_key: str = "") -> str:
@@ -211,13 +210,6 @@ def create_completion_with_fallback(client: Groq, preferred_model: str = None, s
     except Exception as e:
         err_str = str(e).lower()
         
-        # Scenario 1: Model does not support tool calling -> strip tools parameter and retry
-        if "tool calling is not supported" in err_str or "tool_use_failed" in err_str:
-            kwargs.pop("tools", None)
-            kwargs.pop("tool_choice", None)
-            return client.chat.completions.create(**kwargs)
-
-        # Scenario 2: Model 404 or decommissioned -> auto-switch
         if any(term in err_str for term in ["404", "model_not_found", "decommissioned", "does not exist", "not have access"]):
             if status_callback:
                 status_callback("warning", f"Model `{active_model}` unavailable. Auto-switching to accessible engine...")
@@ -225,7 +217,6 @@ def create_completion_with_fallback(client: Groq, preferred_model: str = None, s
             kwargs["model"] = alt_model
             return client.chat.completions.create(**kwargs)
 
-        # Scenario 3: Rate limit pause
         if "429" in err_str or "rate_limit_exceeded" in err_str or "tokens per minute" in err_str:
             delay_match = re.search(r'try again in ([0-9.]+)s', err_str)
             sleep_sec = float(delay_match.group(1)) + 0.5 if delay_match else 2.5
@@ -335,7 +326,7 @@ def run_analyst_agent(
     live_market_data = extract_and_fetch_live_data(user_input, status_callback=status_callback)
     augmented_prompt = user_input + live_market_data
 
-    # 3. Direct Completion Execution (Works universally on all Groq models)
+    # 3. Direct Completion Execution
     try:
         messages = build_contextual_messages(augmented_prompt, SYSTEM_PROMPT, max_turns=3)
         
