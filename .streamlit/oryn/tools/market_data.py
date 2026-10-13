@@ -1,5 +1,6 @@
 """Real-time Financial Market Data Engine (NSE, BSE, Global)."""
 import re
+from typing import Any, Dict, Optional
 import requests
 import yfinance as yf
 from oryn.models.schemas import PermissionCategory, ToolResult
@@ -12,7 +13,7 @@ class MarketDataTool(BaseTool):
     category = PermissionCategory.READ_ONLY
     timeout = 4.0
 
-    def _fetch_yahoo_v8(self, symbol: str) -> Optional[dict]:
+    def _fetch_yahoo_v8(self, symbol: str) -> Optional[Dict[str, Any]]:
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0 Safari/537.36"}
         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1d&range=1d"
         try:
@@ -39,7 +40,10 @@ class MarketDataTool(BaseTool):
     def _fetch_dynamic_market_cap(self, symbol: str) -> str:
         try:
             t = yf.Ticker(symbol)
-            mcap = t.fast_info.get("market_cap")
+            mcap = getattr(t.fast_info, "market_cap", None)
+            if mcap is None and hasattr(t.fast_info, "get"):
+                mcap = t.fast_info.get("market_cap")
+            
             if mcap and mcap > 0:
                 if ".NS" in symbol or ".BO" in symbol:
                     return f"₹{mcap / 1e7:,.0f} Cr"
