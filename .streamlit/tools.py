@@ -2,19 +2,19 @@ import json
 import requests
 import yfinance as yf
 
-# Tool schemas registered with Groq
+# Tool schemas registered for Groq function calling
 AGENT_TOOLS = [
     {
         "type": "function",
         "function": {
             "name": "get_financial_data",
-            "description": "Fetch verified real-time stock price, 52-week range, market cap, and valuation metrics for NSE/BSE or global equities.",
+            "description": "Fetch verified real-time stock price, 52-week range, market cap, and valuation multiples for Indian (NSE/BSE) or global stocks.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "ticker": {
                         "type": "string",
-                        "description": "Ticker symbol, e.g. RELIANCE, TCS, INFY, HDFCBANK, AAPL, MSFT"
+                        "description": "Ticker symbol, e.g., RELIANCE, TCS, INFY, HDFCBANK, AAPL, MSFT"
                     }
                 },
                 "required": ["ticker"]
@@ -24,8 +24,10 @@ AGENT_TOOLS = [
 ]
 
 def tool_get_financial_data(ticker: str) -> dict:
-    """Fetches verified live price, 52w range, and market cap without 401 crumb errors."""
+    """Fetches real-time price, 52-week range, and market cap without 401 crumb authentication errors."""
     clean_sym = ticker.strip().upper().replace("$", "")
+    
+    # Priority resolution order: Raw ticker -> NSE (.NS) -> BSE (.BO)
     candidates = [clean_sym]
     if not clean_sym.endswith((".NS", ".BO")):
         candidates.append(f"{clean_sym}.NS")
@@ -44,16 +46,16 @@ def tool_get_financial_data(ticker: str) -> dict:
     resolved_sym = None
     company_name = clean_sym
 
+    # Step 1: Query open v8 chart API for live price & 52w metrics
     for sym in candidates:
         try:
-            # 1. Fetch live market price & 52w range directly (bypasses 401 crumb block)
             chart_url = f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}?interval=1d&range=1d"
             res = requests.get(chart_url, headers=headers, timeout=5)
             if res.status_code == 200:
                 data = res.json()
                 meta = data.get("chart", {}).get("result", [{}])[0].get("meta", {})
-                if meta and "regularMarketPrice" in meta:
-                    price = float(meta.get("regularMarketPrice") or 0.0)
+                if meta and ("regularMarketPrice" in meta or "chartPreviousClose" in meta):
+                    price = float(meta.get("regularMarketPrice") or meta.get("chartPreviousClose") or 0.0)
                     high_52 = meta.get("fiftyTwoWeekHigh", "N/A")
                     low_52 = meta.get("fiftyTwoWeekLow", "N/A")
                     curr = meta.get("currency", "INR")
@@ -63,13 +65,13 @@ def tool_get_financial_data(ticker: str) -> dict:
         except Exception:
             continue
 
-    # 2. Extract market cap & valuation metrics via fast_info
+    # Step 2: Query fast_info for market cap and trailing metrics
     if resolved_sym:
         try:
             tk = yf.Ticker(resolved_sym)
             fi = tk.fast_info
             mcap = getattr(fi, "market_cap", 0) or 0
-            if not price:
+            if price == 0.0:
                 price = getattr(fi, "last_price", 0.0) or 0.0
             if high_52 == "N/A":
                 high_52 = getattr(fi, "year_high", "N/A")
@@ -89,7 +91,7 @@ def tool_get_financial_data(ticker: str) -> dict:
     if not resolved_sym or price == 0.0:
         return {"error": f"Symbol '{ticker}' could not be resolved on NSE, BSE, or global exchanges."}
 
-    # Format output for Indian Rupee (Crores) or USD (Billions)
+    # Format numbers for INR (Crores) or USD (Billions)
     if curr == "INR" or ".NS" in resolved_sym or ".BO" in resolved_sym:
         mcap_fmt = f"₹{mcap / 1e7:,.2f} Cr" if mcap else "N/A"
         price_fmt = f"₹{price:,.2f}"
