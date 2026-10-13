@@ -32,7 +32,11 @@ FINANCIAL_ACRONYMS_BLACKLIST = {
     "THEIR", "IN", "CLEAN", "TABLE", "WHAT", "WHO", "IS", "THE", "GIVE", "GET",
     "ME", "OF", "WITH", "THIS", "THAT", "FROM", "OUT", "RUN", "HOW", "ABOUT",
     "NOW", "ESTIMATE", "PRICE", "CAP", "RANGE", "RATIO", "STOCK", "SHARE",
-    "USD", "INR", "NSE", "BSE", "FOUNDER", "FOUNDERS", "OF"
+    "USD", "INR", "NSE", "BSE", "FOUNDER", "FOUNDERS", "OF",
+    "CURRENT", "TODAY", "LATEST", "PLEASE", "CHECK", "TELL", "STOCKS", "COMPANY",
+    "COMPARE", "ANALYZE", "ANALYSE", "WHICH", "WHEN", "WHERE", "WHY", "ARE",
+    "WAS", "WERE", "DO", "DOES", "COULD", "WOULD", "SHOULD", "NEED", "OPEN",
+    "CLOSE", "CLOSING", "HIGH", "LOW", "DAY", "WEEK", "MONTH"
 }
 
 SYSTEM_PROMPT = (
@@ -163,7 +167,11 @@ def extract_and_fetch_live_data(prompt: str, status_callback=None) -> str:
 
 def sanitize_report_formatting(text: str) -> str:
     """Repairs tables, strips list prefixes, and immunizes output against KaTeX math mode."""
-    cleaned = re.sub(r'```(?:python)?\s*[\s\S]*?```', '', text)
+    code_blocks = []
+    def preserve_code(match):
+        code_blocks.append(match.group(0))
+        return f"ORYN_CODE_BLOCK_{len(code_blocks) - 1}_PLACEHOLDER"
+    cleaned = re.sub(r'```[\s\S]*?```', preserve_code, text)
     cleaned = re.sub(r'\|\s*\|', '|\n|', cleaned)
 
     lines = cleaned.split('\n')
@@ -204,6 +212,8 @@ def sanitize_report_formatting(text: str) -> str:
     res = '\n'.join(output)
     # Immunize body text: replace all '$' followed by numbers with 'USD '
     res = re.sub(r'\$\s*([0-9])', r'USD \1', res)
+    for index, block in enumerate(code_blocks):
+        res = res.replace(f"ORYN_CODE_BLOCK_{index}_PLACEHOLDER", block)
     return re.sub(r'\n{3,}', '\n\n', res).strip()
 
 def is_quantitative_model_request(prompt: str) -> bool:
