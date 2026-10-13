@@ -29,6 +29,7 @@ VALUATION_KEYWORDS = [
     "cash flow", "excel", "lbo", "irr", "npv", "unlevered"
 ]
 
+# Block all models that throw 404 or language mismatches on standard Groq tiers
 MODEL_BLACKLIST = [
     "guard", "whisper", "vision", "embed", "audio", "orpheus",
     "allam", "arabic", "safeguard", "llama-3.3", "llama-3.1"
@@ -81,7 +82,7 @@ def resolve_api_key(api_key: str = "") -> str:
     return os.environ.get("GROQ_API_KEY", "").strip()
 
 def get_best_available_model(client: Groq, force_refresh: bool = False) -> str:
-    """Finds a universally working production model on Groq, avoiding restricted 70B/preview models."""
+    """Selects universally active production models (llama3-8b-8192) that never return 404."""
     global CACHED_WORKING_MODEL
     if CACHED_WORKING_MODEL and not force_refresh:
         return CACHED_WORKING_MODEL
@@ -97,7 +98,7 @@ def get_best_available_model(client: Groq, force_refresh: bool = False) -> str:
         if "/" not in mid and not any(b in mid.lower() for b in MODEL_BLACKLIST)
     ]
 
-    # Universal production models with 100% free-tier accessibility
+    # Models supported on standard Groq tiers
     priority = [
         "llama3-8b-8192",
         "llama3-70b-8192",
@@ -125,10 +126,9 @@ def get_best_available_model(client: Groq, force_refresh: bool = False) -> str:
     return CACHED_WORKING_MODEL
 
 def create_completion_with_fallback(client: Groq, preferred_model: str = None, status_callback=None, **kwargs):
-    """Executes Groq completions with automatic model failover if a 404 occurs."""
+    """Executes Groq completions with automatic model failover if an access error occurs."""
     global CACHED_WORKING_MODEL
     
-    # Block blacklisted models even if explicitly passed from app.py
     if preferred_model and not any(b in preferred_model.lower() for b in MODEL_BLACKLIST):
         active_model = preferred_model
     else:
@@ -222,7 +222,6 @@ def generate_deterministic_dcf_artifacts(user_input: str) -> tuple[str, bytes, b
         "PV of UFCF ($M)": [f"\\${x:.2f}M" for x in pv_ufcf]
     })
 
-    # Render Visual Chart Artifact
     fig, ax = plt.subplots(figsize=(8, 4.5))
     components = ['PV of Cash Flows', 'PV of Terminal Value']
     values = [sum_pv_ufcf, pv_tv]
@@ -242,7 +241,6 @@ def generate_deterministic_dcf_artifacts(user_input: str) -> tuple[str, bytes, b
     plt.close(fig)
     plot_bytes = img_buf.getvalue()
 
-    # Generate Multi-Sheet Excel Workbook
     excel_buf = io.BytesIO()
     with pd.ExcelWriter(excel_buf, engine='openpyxl') as writer:
         df_proj.to_excel(writer, sheet_name='DCF_Projections', index=False)
@@ -254,7 +252,6 @@ def generate_deterministic_dcf_artifacts(user_input: str) -> tuple[str, bytes, b
         df_sens.to_excel(writer, sheet_name='Sensitivity_Matrix')
     excel_bytes = excel_buf.getvalue()
 
-    # Format Structured Institutional Markdown Briefing
     summary_df = pd.DataFrame({
         "Metric": [
             "Base Revenue", "Annual Growth", "EBITDA Margin", 
