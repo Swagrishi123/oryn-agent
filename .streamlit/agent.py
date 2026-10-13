@@ -32,14 +32,18 @@ FINANCIAL_ACRONYMS_BLACKLIST = {
     "THEIR", "IN", "CLEAN", "TABLE", "WHAT", "WHO", "IS", "THE", "GIVE", "GET",
     "ME", "OF", "WITH", "THIS", "THAT", "FROM", "OUT", "RUN", "HOW", "ABOUT",
     "NOW", "ESTIMATE", "PRICE", "CAP", "RANGE", "RATIO", "STOCK", "SHARE",
-    "USD", "INR", "NSE", "BSE", "FOUNDER", "FOUNDERS", "OF"
+    "USD", "INR", "NSE", "BSE", "FOUNDER", "FOUNDERS", "OF",
+    "CURRENT", "TODAY", "LATEST", "PLEASE", "CHECK", "TELL", "STOCKS", "COMPANY",
+    "COMPARE", "ANALYZE", "ANALYSE", "WHICH", "WHEN", "WHERE", "WHY", "ARE",
+    "WAS", "WERE", "DO", "DOES", "COULD", "WOULD", "SHOULD", "NEED", "OPEN",
+    "CLOSE", "CLOSING", "HIGH", "LOW", "DAY", "WEEK", "MONTH"
 }
 
 SYSTEM_PROMPT = (
     "You are ORYN Analyst, an elite institutional BFSI quantitative analyst and corporate intelligence advisor.\n\n"
     "CRITICAL FACT PROTOCOL:\n"
-    "- When [VERIFIED LIVE EXCHANGE DATA] or [VERIFIED RESEARCH RECORDS] is provided, "
-    "base your response strictly on those verified facts. Never contradict the context.\n"
+    "- Treat retrieved market data and research snippets as evidence, not guaranteed truth. "
+    "State source and retrieval timestamp when available; never label data verified unless metadata supports that claim.\n"
     "- If asked who founded a company or holds public office, state the exact names and dates directly from the verified record.\n\n"
     "CRITICAL FORMATTING & TABLE RULES (IMMUNITY TO KATEX COLLAPSE):\n"
     "1. DIRECT STRUCTURAL DELIVERY: Eliminate introductory pleasantries. Begin directly with the analysis header.\n"
@@ -117,7 +121,7 @@ def extract_and_fetch_live_data(prompt: str, status_callback=None) -> str:
         market_rows = []
         for ticker in target_tickers:
             if status_callback:
-                status_callback("info", f"Retrieving verified market metrics for {ticker}...")
+                status_callback("info", f"Retrieving market data for {ticker}...")
             try:
                 data = tool_get_financial_data(ticker)
                 price = data.get("current_price", "N/A")
@@ -128,18 +132,19 @@ def extract_and_fetch_live_data(prompt: str, status_callback=None) -> str:
                 cname = data.get("company_name", ticker)
 
                 if status_callback and price != "N/A":
-                    status_callback("info", f"✅ {ticker} Live Price: {price} | Market Cap: {mcap}")
+                    status_callback("info", f"Retrieved {ticker} price: {price} | Source: {data.get('source', 'unknown')} | Retrieved UTC: {data.get('retrieved_at_utc', 'unknown')}")
 
                 market_rows.append(
-                    f"- {cname} ({resolved}): Current Price = {price}, Market Cap = {mcap}, "
-                    f"52-Week High = {high}, 52-Week Low = {low}"
+                    f"- {cname} ({resolved}): Price = {price}, Market Cap = {mcap}, "
+                    f"52-Week High = {high}, 52-Week Low = {low}; "
+                    f"Source = {data.get('source', 'unknown')}; Retrieved UTC = {data.get('retrieved_at_utc', 'unknown')}"
                 )
             except Exception:
                 continue
 
         if market_rows:
             injected_context.append(
-                "[VERIFIED LIVE EXCHANGE DATA - USE IN TABLE]:\n" + 
+                "[RETRIEVED MARKET DATA - CHECK SOURCE AND TIMESTAMP]:\n" + 
                 "\n".join(market_rows)
             )
 
@@ -149,11 +154,11 @@ def extract_and_fetch_live_data(prompt: str, status_callback=None) -> str:
         # Avoid running search for pure quantitative modeling or restructuring prompts
         if not any(w in p_lower for w in ["dcf", "discounted cash flow", "wacc", "waterfall", "restructuring", "ebitda margin"]):
             if status_callback:
-                status_callback("info", "Autonomous research: retrieving verified records...")
+                status_callback("info", "Researching available sources...")
             scraped_intel = dynamic_web_search(prompt)
             if scraped_intel:
                 injected_context.append(
-                    f"[VERIFIED RESEARCH RECORDS - USE THESE FACTS EXCLUSIVELY]:\n{scraped_intel}"
+                    f"[RETRIEVED RESEARCH SNIPPETS - CHECK SOURCES BEFORE ASSERTING FACTS]:\n{scraped_intel}"
                 )
 
     if injected_context:
@@ -162,7 +167,11 @@ def extract_and_fetch_live_data(prompt: str, status_callback=None) -> str:
 
 def sanitize_report_formatting(text: str) -> str:
     """Repairs tables, strips list prefixes, and immunizes output against KaTeX math mode."""
-    cleaned = re.sub(r'```(?:python)?\s*[\s\S]*?```', '', text)
+    code_blocks = []
+    def preserve_code(match):
+        code_blocks.append(match.group(0))
+        return f"ORYN_CODE_BLOCK_{len(code_blocks) - 1}_PLACEHOLDER"
+    cleaned = re.sub(r'```[\s\S]*?```', preserve_code, text)
     cleaned = re.sub(r'\|\s*\|', '|\n|', cleaned)
 
     lines = cleaned.split('\n')
@@ -203,6 +212,8 @@ def sanitize_report_formatting(text: str) -> str:
     res = '\n'.join(output)
     # Immunize body text: replace all '$' followed by numbers with 'USD '
     res = re.sub(r'\$\s*([0-9])', r'USD \1', res)
+    for index, block in enumerate(code_blocks):
+        res = res.replace(f"ORYN_CODE_BLOCK_{index}_PLACEHOLDER", block)
     return re.sub(r'\n{3,}', '\n\n', res).strip()
 
 def is_quantitative_model_request(prompt: str) -> bool:
@@ -315,56 +326,76 @@ def build_contextual_messages(user_input: str, system_prompt: str, max_turns: in
         pass
     return [{"role": "system", "content": system_prompt}] + history + [{"role": "user", "content": user_input}]
 
-def generate_deterministic_dcf_artifacts(user_input: str) -> tuple[str, bytes, bytes]:
-    years = 5
-    years_idx = list(range(1, years + 1))
-    rev = [50.0 * ((1 + 0.20) ** t) for t in years_idx]
-    ebitda = [r * 0.25 for r in rev]
-    df = [1 / ((1 + 0.10) ** t) for t in years_idx]
-    pv_ufcf = [u * d for u, d in zip(ebitda, df)]
-    sum_pv_ufcf = sum(pv_ufcf)
-    tv = (ebitda[-1] * 1.025) / (0.10 - 0.025)
-    pv_tv = tv / (1.10 ** years)
-    ev = sum_pv_ufcf + pv_tv
+def _percent_assumption(prompt: str, patterns: list[str], default: float) -> float:
+    for pattern in patterns:
+        match = re.search(pattern, prompt, flags=re.IGNORECASE)
+        if match:
+            return float(match.group(1)) / 100.0
+    return default
 
-    # KaTeX-immune table structure: currency specified in header, numerical values in cells
-    df_proj = pd.DataFrame({
-        "Year": [str(y) for y in years_idx],
-        "Revenue (USD M)": [f"{x:.2f}" for x in rev],
-        "EBITDA (USD M)": [f"{x:.2f}" for x in ebitda],
-        "Discount Factor": [f"{x:.4f}" for x in df],
-        "PV of UFCF (USD M)": [f"{x:.2f}" for x in pv_ufcf]
-    })
 
+def generate_deterministic_dcf_artifacts(user_input: str) -> tuple[str, bytes | None, bytes | None]:
+    """Build an illustrative DCF with transparent UFCF components and disclosed defaults."""
+    growth = _percent_assumption(user_input, [
+        r"(?:revenue\s+growth|growth\s+rate)\s*(?:of|is|at|=|:)?\s*([\d.]+)\s*%",
+        r"([\d.]+)\s*%\s*(?:annual\s+)?revenue\s+growth",
+        r"(?:growing|grows|grow)\s+(?:at\s+)?([\d.]+)\s*%"
+    ], 0.20)
+    base_match = re.search(r"(?:starting|base|initial)\s+revenue(?:\s+of|\s*[:=])?\s*\$?\s*([\d,.]+)\s*(billion|bn|million|mn|m|b)?", user_input, re.I)
+    year1_match = re.search(r"revenue\s*:\s*(?:usd\s*)?\$?\s*([\d,.]+)\s*(billion|bn|million|mn|m|b)?\s+in\s+year\s*1", user_input, re.I)
+    def to_millions(match):
+        value = float(match.group(1).replace(',', ''))
+        return value * 1000 if (match.group(2) or '').lower() in {'billion', 'bn', 'b'} else value
+    if base_match:
+        base_revenue = to_millions(base_match)
+        revenue_basis = 'Year-0 starting revenue'
+    elif year1_match:
+        year1_revenue = to_millions(year1_match)
+        base_revenue = year1_revenue / (1 + growth)
+        revenue_basis = f'Year-1 revenue of USD {year1_revenue:.2f}M (Year-0 base back-solved)'
+    else:
+        base_revenue, revenue_basis = 50.0, 'default Year-0 starting revenue'
+    ebitda_margin = _percent_assumption(user_input, [r"(?:ebitda\s+margin|margin)\s*(?:of|is|at|=|:)?\s*(?:apparently\s+)?([\d.]+)\s*%", r"([\d.]+)\s*%\s*ebitda\s+margin"], 0.25)
+    wacc = _percent_assumption(user_input, [r"(?:wacc|discount\s+rate)\s*(?:of|is|at|=|:)?\s*(?:apparently\s+)?([\d.]+)\s*%", r"([\d.]+)\s*%\s*(?:wacc|discount\s+rate)"], 0.10)
+    terminal_growth = _percent_assumption(user_input, [r"(?:terminal\s+growth|perpetual\s+growth)\s*(?:rate)?\s*(?:of|is|at|=|:)?\s*(?:apparently\s+)?([\d.]+)\s*%", r"([\d.]+)\s*%\s*(?:terminal|perpetual)\s+growth"], 0.025)
+    if base_revenue <= 0 or growth <= -1 or not 0 < ebitda_margin <= 1:
+        return 'Invalid DCF assumptions: revenue must be positive, growth must exceed -100%, and EBITDA margin must be greater than 0% and at most 100%.', None, None
+    if not 0 < wacc < 1 or not 0 <= terminal_growth < wacc:
+        return 'Invalid DCF assumptions: WACC must be between 0% and 100%, and terminal growth must be non-negative and lower than WACC.', None, None
+    years = list(range(1, 6))
+    tax_rate, da_pct, capex_pct, nwc_pct = 0.25, 0.03, 0.04, 0.01
+    revenue = [base_revenue * (1 + growth) ** y for y in years]
+    ebitda = [x * ebitda_margin for x in revenue]
+    da = [x * da_pct for x in revenue]
+    ebit = [a - b for a, b in zip(ebitda, da)]
+    taxes = [max(0, x * tax_rate) for x in ebit]
+    capex = [x * capex_pct for x in revenue]
+    dnwc = [(revenue[i] - (base_revenue if i == 0 else revenue[i-1])) * nwc_pct for i in range(5)]
+    ufcf = [e - t + d - c - n for e, t, d, c, n in zip(ebit, taxes, da, capex, dnwc)]
+    factors = [1 / (1 + wacc) ** y for y in years]
+    pv = [x * f for x, f in zip(ufcf, factors)]
+    pv_cashflows = sum(pv)
+    terminal_value = ufcf[-1] * (1 + terminal_growth) / (wacc - terminal_growth)
+    pv_terminal = terminal_value / (1 + wacc) ** 5
+    ev = pv_cashflows + pv_terminal
+    df_proj = pd.DataFrame({'Year': years, 'Revenue (USD M)': [round(x,2) for x in revenue], 'EBITDA (USD M)': [round(x,2) for x in ebitda], 'D&A (USD M)': [round(x,2) for x in da], 'EBIT (USD M)': [round(x,2) for x in ebit], 'Cash Taxes (USD M)': [round(x,2) for x in taxes], 'CapEx (USD M)': [round(x,2) for x in capex], 'Change in NWC (USD M)': [round(x,2) for x in dnwc], 'UFCF (USD M)': [round(x,2) for x in ufcf], 'Discount Factor': [round(x,4) for x in factors], 'PV of UFCF (USD M)': [round(x,2) for x in pv]})
     fig, ax = plt.subplots(figsize=(8, 4))
-    ax.bar(['PV Cash Flows', 'PV Terminal Value'], [sum_pv_ufcf, pv_tv], color=['#4a148c', '#7b1fa2'], width=0.45)
-    ax.set_title(f'Enterprise Value: USD {ev:.2f}M', fontsize=12, fontweight='bold')
+    ax.bar(['PV of UFCF', 'PV of Terminal Value'], [pv_cashflows, pv_terminal], width=0.45)
+    ax.set_title(f'Illustrative Enterprise Value: USD {ev:.2f}M')
     plt.tight_layout()
-    
     img_buf = io.BytesIO()
-    plt.savefig(img_buf, format='png', dpi=200)
+    plt.savefig(img_buf, format='png', dpi=160)
     plt.close('all')
-
     excel_buf = io.BytesIO()
     with pd.ExcelWriter(excel_buf, engine='openpyxl') as writer:
         df_proj.to_excel(writer, sheet_name='DCF_Projections', index=False)
-
-    rows = ["| " + " | ".join(map(str, row)) + " |" for row in df_proj.values]
-    headers = "| " + " | ".join(df_proj.columns) + " |"
-    dividers = "| " + " | ".join([":---"] * len(df_proj.columns)) + " |"
-    table_md = "\n".join([headers, dividers] + rows)
-
-    calc_briefing = (
-        f"### 📊 Institutional DCF Valuation Schedule\n\n"
-        f"**Implied Enterprise Value:** **USD {ev:.2f}M**\n\n"
-        f"{table_md}\n\n"
-        f"* **Cumulative PV of Cash Flows:** USD {sum_pv_ufcf:.2f}M\n"
-        f"* **Terminal Value (TV):** USD {tv:.2f}M\n"
-        f"* **Present Value of TV:** USD {pv_tv:.2f}M\n"
-        f"* **Implied Enterprise Value (EV):** **USD {ev:.2f}M**"
-    )
-    return calc_briefing, img_buf.getvalue(), excel_buf.getvalue()
-
+    headers = '| ' + ' | '.join(df_proj.columns) + ' |'
+    divider = '| ' + ' | '.join([':---'] * len(df_proj.columns)) + ' |'
+    rows = ['| ' + ' | '.join(map(str, row)) + ' |' for row in df_proj.values]
+    table = '\n'.join([headers, divider] + rows)
+    assumptions = (f'- Revenue basis: {revenue_basis}\n- Year-0 starting revenue: USD {base_revenue:.2f}M\n- Annual revenue growth: {growth:.2%}\n- EBITDA margin: {ebitda_margin:.2%}\n- WACC: {wacc:.2%}\n- Terminal growth: {terminal_growth:.2%}\n- Illustrative defaults: tax {tax_rate:.0%}, D&A {da_pct:.0%} of revenue, CapEx {capex_pct:.0%} of revenue, change in NWC {nwc_pct:.0%} of incremental revenue.')
+    report = (f'### Illustrative DCF Valuation\n\n**Implied Enterprise Value: USD {ev:.2f}M**\n\n**Important:** This is not a verified valuation of Reliance Industries. Validate all inputs against company financial statements.\n\n**Assumptions**\n{assumptions}\n\n{table}\n\n- Present value of projected UFCF: USD {pv_cashflows:.2f}M\n- Terminal value: USD {terminal_value:.2f}M\n- Present value of terminal value: USD {pv_terminal:.2f}M\n- Enterprise value = PV of projected UFCF + PV of terminal value.')
+    return report, img_buf.getvalue(), excel_buf.getvalue()
 def run_analyst_agent(
     user_input: str,
     api_key: str = "",
@@ -374,6 +405,10 @@ def run_analyst_agent(
     **kwargs
 ) -> tuple[str, bytes | None, bytes | None, float]:
     start_time = time.perf_counter()
+    if is_quantitative_model_request(user_input):
+        briefing_text, plot_bytes, excel_bytes = generate_deterministic_dcf_artifacts(user_input)
+        return sanitize_report_formatting(briefing_text), plot_bytes, excel_bytes, time.perf_counter() - start_time
+
     active_key = resolve_api_key(api_key)
     if not active_key:
         return "⚠️ **API Key Missing**: Please provide a Groq API key in the sidebar.", None, None, 0.0
@@ -382,10 +417,6 @@ def run_analyst_agent(
         client = Groq(api_key=active_key, max_retries=0)
     except Exception as e:
         return f"⚠️ **Client Error**: {e}", None, None, 0.0
-
-    if is_quantitative_model_request(user_input):
-        briefing_text, plot_bytes, excel_bytes = generate_deterministic_dcf_artifacts(user_input)
-        return sanitize_report_formatting(briefing_text), plot_bytes, excel_bytes, time.perf_counter() - start_time
 
     context_data = extract_and_fetch_live_data(user_input, status_callback=status_callback)
     augmented_prompt = user_input + context_data

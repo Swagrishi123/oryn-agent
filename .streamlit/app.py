@@ -3,6 +3,7 @@ import io
 import re
 import base64
 import datetime
+import html
 import importlib
 import sys
 
@@ -76,7 +77,7 @@ with st.sidebar:
         index=0,
         help="Institutional reasoning engines on Groq"
     )
-    hitl_enabled = st.toggle("🛡️ HITL Safety Guardrails", value=True)
+    st.warning("Human approval is not yet enforced. ORYN currently performs research and local calculations; do not use it for consequential external actions.")
 
 # --- Canonical UI Cleaner ---
 def clean_for_ui(text: str) -> str:
@@ -91,7 +92,7 @@ def clean_for_ui(text: str) -> str:
     return sanitize_report_formatting(text)
 
 def build_html_report(text: str, plot_bytes: bytes | None) -> str:
-    current_date = datetime.datetime.now().strftime("%B %d, %Y • %H:%M UTC")
+    current_date = datetime.datetime.now(datetime.timezone.utc).strftime("%B %d, %Y • %H:%M UTC")
     img_html = ""
     if plot_bytes:
         b64 = base64.b64encode(plot_bytes).decode('utf-8')
@@ -102,7 +103,7 @@ def build_html_report(text: str, plot_bytes: bytes | None) -> str:
         </div>
         """
     clean_text = clean_for_ui(text)
-    paragraphs = "".join([f"<p>{p.strip()}</p>" for p in clean_text.split("\n\n") if p.strip()])
+    paragraphs = "".join([f"<p>{html.escape(p.strip())}</p>" for p in clean_text.split("\n\n") if p.strip()])
     return f"""<!DOCTYPE html>
 <html>
 <head>
@@ -169,7 +170,7 @@ def render_download_suite(text: str, plot_bytes: bytes | None, excel_bytes: byte
 # --- Render Chat History ---
 for idx, msg in enumerate(st.session_state.messages):
     with st.chat_message(msg.get("role", "assistant")):
-        st.markdown(clean_for_ui(msg.get("content", "")), unsafe_allow_html=True)
+        st.markdown(clean_for_ui(msg.get("content", "")))
         if msg.get("image"):
             st.image(msg["image"], caption="Generated Visual Artifact", use_container_width=True)
         if msg.get("role") == "assistant":
@@ -205,14 +206,13 @@ if user_input:
                 user_input=user_input,
                 api_key=st.session_state.api_key,
                 selected_model=active_model,
-                hitl_enabled=hitl_enabled,
                 status_callback=status_callback
             )
 
             status_container.update(label=f"✅ Complete ({elapsed:.2f}s)", state="complete", expanded=False)
 
             clean_display_text = clean_for_ui(final_text)
-            st.markdown(clean_display_text, unsafe_allow_html=True)
+            st.markdown(clean_display_text)
 
             if generated_plot:
                 st.image(generated_plot, caption="Generated Visual Artifact", use_container_width=True)
