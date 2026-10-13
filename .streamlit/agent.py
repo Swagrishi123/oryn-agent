@@ -66,7 +66,7 @@ def run_analyst_agent(
     except Exception as e:
         return f"⚠️ **Client Initialization Error**: {e}", None, None, 0.0
 
-    active_model = "llama-3.1-8b-instant"
+    active_model = "llama-3.3-70b-versatile"
 
     scratchpad = [
         {"role": "system", "content": SYSTEM_PROMPT},
