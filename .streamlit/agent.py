@@ -413,7 +413,7 @@ def run_analyst_agent(
                 preferred_model=selected_model,
                 status_callback=status_callback,
                 messages=messages,
-                max_tokens=550,
+                max_tokens=650,
                 temperature=0.1
             )
             elapsed = time.perf_counter() - start_time
