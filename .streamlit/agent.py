@@ -236,7 +236,9 @@ def get_best_available_model(client: Groq, exclude_model: str = None, force_refr
 def create_completion_with_fallback(client: Groq, preferred_model: str = None, status_callback=None, **kwargs):
     global CACHED_WORKING_MODEL
     active_model = preferred_model or get_best_available_model(client)
-    kwargs["max_tokens"] = min(kwargs.get("max_tokens", 1200), 1200)
+    
+    # Strictly cap at 800 tokens to stay well below the 1,000 OTPM limit
+    kwargs["max_tokens"] = min(kwargs.get("max_tokens", 800), 800)
     kwargs["temperature"] = kwargs.get("temperature", 0.1)
     kwargs["model"] = active_model
 
@@ -244,12 +246,23 @@ def create_completion_with_fallback(client: Groq, preferred_model: str = None, s
         return client.chat.completions.create(**kwargs)
     except Exception as e:
         err_str = str(e).lower()
+
+        # Automatic recovery if OTPM or max_tokens is triggered
+        if any(term in err_str for term in ["output tokens per minute", "otpm", "reduce max_tokens", "rate_limit_exceeded"]):
+            if kwargs["max_tokens"] > 500:
+                kwargs["max_tokens"] = 500
+                if status_callback:
+                    status_callback("info", "Adjusting output budget to fit tier quota... retrying.")
+                return client.chat.completions.create(**kwargs)
+
+        # Failover on 404/decommissioned model
         if any(term in err_str for term in ["404", "model_not_found", "decommissioned", "does not exist", "not have access"]):
             alt_model = get_best_available_model(client, exclude_model=active_model, force_refresh=True)
             kwargs["model"] = alt_model
             return client.chat.completions.create(**kwargs)
 
-        if "429" in err_str or "rate_limit_exceeded" in err_str or "tokens per minute" in err_str:
+        # Standard 429 delay pause
+        if "429" in err_str:
             delay_match = re.search(r'try again in ([0-9.]+)s', err_str)
             sleep_sec = float(delay_match.group(1)) + 0.5 if delay_match else 2.5
             time.sleep(sleep_sec)
@@ -345,7 +358,7 @@ def run_analyst_agent(
             preferred_model=selected_model,
             status_callback=status_callback,
             messages=messages,
-            max_tokens=1200
+            max_tokens=800
         )
         final_text = resp.choices[0].message.content or ""
         elapsed = time.perf_counter() - start_time
