@@ -87,30 +87,28 @@ def get_best_available_model(client: Groq, force_refresh: bool = False) -> str:
     except Exception:
         available_ids = []
 
-    # Filter out decommissioned models, non-chat models, and non-English models
+    # Exclude audio, prompt guards, and non-English models
     filter_out = [
-        "llama3-8b-8192", "llama3-70b-8192", "mixtral", "gemma",
-        "whisper", "vision", "embed", "audio", "orpheus",
-        "allam", "arabic", "safeguard", "guard"
+        "safeguard", "guard", "whisper", "orpheus",
+        "allam", "arabic", "vision", "embed", "audio"
     ]
     candidates = [
         mid for mid in available_ids
-        if "/" not in mid and not any(b in mid.lower() for b in filter_out)
+        if not any(b in mid.lower() for b in filter_out)
     ]
 
-    # Modern, active Groq models in prioritized order
+    # Target the verified active models present on your Groq key
     preference = [
+        "qwen/qwen3.8-27b",
+        "openai/gpt-oss-20b",
+        "openai/gpt-oss-120b",
         "llama-3.2-3b-preview",
-        "llama-3.2-1b-preview",
-        "llama-3.1-8b-instant",
-        "llama-3.3-70b-versatile",
-        "deepseek-r1-distill-llama-70b",
-        "qwen-2.5-32b"
+        "llama-3.1-8b-instant"
     ]
 
     test_queue = [m for m in preference if m in candidates] + [m for m in candidates if m not in preference]
     if not test_queue:
-        test_queue = preference
+        test_queue = candidates if candidates else preference
 
     for model_name in test_queue:
         try:
@@ -124,14 +122,18 @@ def get_best_available_model(client: Groq, force_refresh: bool = False) -> str:
         except Exception:
             continue
 
+    if candidates:
+        CACHED_WORKING_MODEL = candidates[0]
+        return CACHED_WORKING_MODEL
+
     avail_str = ", ".join(available_ids) if available_ids else "None found"
-    raise RuntimeError(f"Could not connect to any active Groq text model. Available IDs on your key: [{avail_str}]")
+    raise RuntimeError(f"Could not connect to any active Groq text model. Available IDs: [{avail_str}]")
 
 def create_completion_with_fallback(client: Groq, preferred_model: str = None, status_callback=None, **kwargs):
     """Executes Groq completions with automatic model failover if any 400/404 error occurs."""
     global CACHED_WORKING_MODEL
     
-    filter_out = ["llama3-8b-8192", "llama3-70b-8192", "mixtral", "gemma", "allam", "arabic"]
+    filter_out = ["guard", "safeguard", "orpheus", "whisper", "allam", "arabic"]
     if preferred_model and not any(b in preferred_model.lower() for b in filter_out):
         active_model = preferred_model
     else:
@@ -165,10 +167,10 @@ def parse_prompt_financial_parameters(prompt: str) -> tuple[float, float, float,
     margin_match = re.search(r'(\d+(?:\.\d+)?)\s*%\s*ebitda', p)
     margin = float(margin_match.group(1)) / 100.0 if margin_match else 0.25
 
-    wacc_match = re.search(r'(\\d+(?:\\.\\d+)?)\\s*%\\s*wacc', p)
+    wacc_match = re.search(r'(\d+(?:\.\d+)?)\s*%\s*wacc', p)
     wacc = float(wacc_match.group(1)) / 100.0 if wacc_match else 0.10
 
-    tg_match = re.search(r'(\\d+(?:\\.\\d+)?)\\s*%\\s*terminal\\s*(?:growth)?', p)
+    tg_match = re.search(r'(\d+(?:\.\d+)?)\s*%\s*terminal\s*(?:growth)?', p)
     tg = float(tg_match.group(1)) / 100.0 if tg_match else 0.025
 
     return base_rev, growth, margin, wacc, tg, 5
