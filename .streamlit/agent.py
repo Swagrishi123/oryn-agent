@@ -11,25 +11,27 @@ from tools import AGENT_TOOLS, tool_get_financial_data, tool_web_search
 from sandbox import tool_python_interpreter
 
 SYSTEM_PROMPT = (
-    "You are ORYN Analyst, an institutional BFSI quantitative analyst and equity research specialist.\n"
-    "CORE RULES:\n"
-    "1. Respond naturally in the language used by the user.\n"
-    "2. CONVERSATIONAL MEMORY & CONTEXT: Always maintain continuity with the ongoing conversation. "
-    "Resolve pronouns (e.g., 'he', 'she', 'they', 'his changes') using preceding conversation turns.\n"
-    "3. FACTUAL INTEGRITY & ZERO HALLUCINATION: Never invent or fabricate personal biographies, "
-    "corporate executive positions, regulatory appointments, or fictitious names. "
-    "If a recent appointment, fact, or policy detail is outside confirmed public records, "
-    "state verified historical facts objectively without fabricating synthetic personas or timelines.\n"
-    "4. When creating comparison tables, always use standard Markdown syntax with pipes and dashed separators (| Metric | Value |).\n"
-    "5. For valuation and DCF modeling requests, execute quantitative schedules, render a matplotlib chart, and write 'model.xlsx'.\n"
-    "6. Format currency values cleanly as '$346M' or '346 million USD' without awkward backticks."
+    "You are ORYN Analyst, an elite institutional BFSI quantitative analyst and investment banking advisor.\n"
+    "CORE OPERATING RULES:\n"
+    "1. DIRECT STRUCTURAL DELIVERY: Eliminate introductory pleasantries, greetings (e.g., 'Hello', 'As the VP of M&A...'), "
+    "and conversational transitions. Open directly with the memo title and structured content.\n"
+    "2. HIGH DENSITY & CONCISENESS: Present financial comparisons and multi-scenario analyses primarily using compact "
+    "Markdown tables (| Metric | Value |) followed by bullet points. Keep prose tight and packed with data so full reports complete within 700 tokens without truncation.\n"
+    "3. INSTITUTIONAL M&A & BFSI REASONING:\n"
+    "   - Stock Deals: Accretion is driven strictly by P/E arbitrage (Buyer P/E > Target Purchase P/E is accretive).\n"
+    "   - Debt / Cash Deals: Buyer P/E is completely irrelevant. Accretion is driven strictly by comparing Target Earnings Yield (1 / Target Purchase P/E) "
+    "against the After-Tax Cost of Financing [Interest Rate * (1 - Tax Rate)]. If After-Tax Debt Cost > Target Earnings Yield, the deal is DILUTIVE.\n"
+    "   - Equity Dilution: Formulate share dilution strictly as Deal Consideration / Buyer Market Cap. Never equate Market Cap / Net Income to share count.\n"
+    "4. FACTUAL RIGOR & CONTEXT: Maintain multi-turn memory. Never fabricate personal profiles, positions, or corporate roles.\n"
+    "5. DCF VALUATION ENGINES: For DCF modeling requests, execute quantitative schedules, render a matplotlib chart, and write 'model.xlsx'.\n"
+    "6. Clean LaTeX Escaping: Format currency as '$346M' or '346 million USD' without awkward backticks."
 )
 
 CACHED_WORKING_MODEL = None
 
 def is_quantitative_model_request(prompt: str) -> bool:
     """Accurately distinguishes between requests to build/calculate a DCF model 
-    versus general/qualitative business valuation and equity research queries."""
+    versus qualitative/advisory equity research and M&A queries."""
     p = prompt.lower()
     
     dcf_terms = [
@@ -154,13 +156,12 @@ def create_completion_with_fallback(client: Groq, preferred_model: str = None, s
     else:
         active_model = get_best_available_model(client)
         
-    # Safe ceiling on output tokens to stay comfortably within Groq OTPM limit
+    # Enforce safe upper ceiling on max_tokens to stay within Groq OTPM limits
     if "max_tokens" in kwargs:
-        kwargs["max_tokens"] = min(kwargs["max_tokens"], 800)
+        kwargs["max_tokens"] = min(kwargs["max_tokens"], 750)
     else:
-        kwargs["max_tokens"] = 800
+        kwargs["max_tokens"] = 750
 
-    # Low temperature prevents generative hallucinations / fake names
     if "temperature" not in kwargs:
         kwargs["temperature"] = 0.1
 
@@ -174,7 +175,7 @@ def create_completion_with_fallback(client: Groq, preferred_model: str = None, s
         # Scenario 1: Token rate limit (429 OTPM) -> Reduce token ceiling and retry
         if "429" in err_str or "rate_limit_exceeded" in err_str or "output tokens per minute" in err_str:
             if status_callback:
-                status_callback("info", "Rate limit detected. Auto-adjusting response token limit...")
+                status_callback("info", "Rate limit detected. Adjusting token ceiling...")
             kwargs["max_tokens"] = 450
             try:
                 return client.chat.completions.create(**kwargs)
@@ -209,7 +210,6 @@ def build_contextual_messages(user_input: str, system_prompt: str, max_turns: in
                 role = m.get("role", "user")
                 content = m.get("content", "")
                 if role in ["user", "assistant"] and content:
-                    # Truncate older assistant turns to keep prompt token size compact
                     if role == "assistant" and len(content) > 300:
                         content = content[:300] + "..."
                     history.append({"role": role, "content": str(content)})
@@ -229,7 +229,7 @@ def parse_prompt_financial_parameters(prompt: str) -> tuple[float, float, float,
     growth_match = re.search(r'(\d+(?:\.\d+)?)\s*%\s*(?:annual\s*)?growth', p)
     growth = float(growth_match.group(1)) / 100.0 if growth_match else 0.20
 
-    margin_match = re.search(r'(\\d+(?:\\.\\d+)?)\\s*%\\s*ebitda', p)
+    margin_match = re.search(r'(\d+(?:\.\d+)?)\s*%\s*ebitda', p)
     margin = float(margin_match.group(1)) / 100.0 if margin_match else 0.25
 
     wacc_match = re.search(r'(\\d+(?:\\.\\d+)?)\\s*%\\s*wacc', p)
@@ -393,7 +393,7 @@ def run_analyst_agent(
 
     is_dcf_calc = is_quantitative_model_request(user_input)
 
-    # Branch 1: General knowledge, business analysis, equity research memos
+    # Branch 1: M&A Advisory, FIG Equity Research, General Macro Briefings
     if not is_dcf_calc:
         try:
             messages = build_contextual_messages(user_input, SYSTEM_PROMPT, max_turns=3)
@@ -402,7 +402,7 @@ def run_analyst_agent(
                 preferred_model=selected_model,
                 status_callback=status_callback,
                 messages=messages,
-                max_tokens=800,
+                max_tokens=750,
                 temperature=0.1
             )
             elapsed = time.perf_counter() - start_time
@@ -428,7 +428,7 @@ def run_analyst_agent(
             messages=messages,
             tools=AGENT_TOOLS,
             tool_choice="auto",
-            max_tokens=800,
+            max_tokens=750,
             temperature=0.1
         )
         msg = response.choices[0].message
