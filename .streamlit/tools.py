@@ -96,7 +96,7 @@ def fetch_yahoo_v8_chart(symbol: str) -> dict | None:
                 high_52 = meta.get("fiftyTwoWeekHigh", "N/A")
                 low_52 = meta.get("fiftyTwoWeekLow", "N/A")
                 curr = meta.get("currency", "INR")
-                is_inr = curr == "INR" or ".NS" in symbol or ".BO" in symbol
+                is_inr = curr == "INR"
                 return {
                     "price_formatted": f"₹{float(price):,.2f}" if is_inr else f"${float(price):,.2f}",
                     "high_52": f"₹{float(high_52):,.2f}" if is_inr and isinstance(high_52, (int, float)) else str(high_52),
