@@ -28,22 +28,54 @@ def extract_code_from_error(err_str: str) -> str | None:
     return clean_extracted_code(m_code.group(1)) if m_code else None
 
 def resolve_api_key(api_key: str = "") -> str:
-    # 1. User sidebar input
     if api_key and api_key.strip():
         return api_key.strip()
-    # 2. Streamlit Cloud Secrets
     try:
         import streamlit as st
         if "GROQ_API_KEY" in st.secrets and st.secrets["GROQ_API_KEY"]:
             return str(st.secrets["GROQ_API_KEY"]).strip()
     except Exception:
         pass
-    # 3. Environment Variable
     return os.environ.get("GROQ_API_KEY", "").strip()
+
+def get_best_available_model(client: Groq, requested_model: str = None) -> str:
+    """Queries Groq to find the exact models available to this specific API key."""
+    available = []
+    try:
+        available = [m.id for m in client.models.list().data]
+    except Exception:
+        pass
+
+    # 1. Use requested model if it exists on Groq
+    if requested_model and requested_model in available:
+        return requested_model
+
+    # 2. Match against prioritized list of production chat models
+    candidates = [
+        "llama-3.3-70b-versatile",
+        "llama-3.1-70b-versatile",
+        "llama-3.1-8b-instant",
+        "llama3-70b-8192",
+        "llama3-8b-8192",
+        "mixtral-8x7b-32768",
+        "gemma2-9b-it"
+    ]
+    for cand in candidates:
+        if cand in available:
+            return cand
+
+    # 3. Fallback: select any chat model that isn't whisper/audio
+    for m in available:
+        m_lower = m.lower()
+        if ("llama" in m_lower or "mixtral" in m_lower or "gemma" in m_lower) and "whisper" not in m_lower:
+            return m
+
+    return requested_model or "llama3-8b-8192"
 
 def run_analyst_agent(
     user_input: str,
     api_key: str = "",
+    selected_model: str = None,
     engine_mode: str = "Cloud (Groq BYOK)",
     hitl_enabled: bool = True,
     status_callback=None,
@@ -54,8 +86,7 @@ def run_analyst_agent(
     active_key = resolve_api_key(api_key)
     if not active_key:
         return (
-            "⚠️ **API Key Missing**: No Groq API key found. Please enter your free key in the sidebar "
-            "or configure `GROQ_API_KEY` under Streamlit Cloud App Settings → Secrets.",
+            "⚠️ **API Key Missing**: Please enter your free Groq API key in the sidebar.",
             None,
             None,
             0.0
@@ -66,7 +97,9 @@ def run_analyst_agent(
     except Exception as e:
         return f"⚠️ **Client Initialization Error**: {e}", None, None, 0.0
 
-    active_model = "llama-3.3-70b-versatile"
+    active_model = get_best_available_model(client, selected_model)
+    if status_callback:
+        status_callback("info", f"Connected to Groq (`{active_model}`)")
 
     scratchpad = [
         {"role": "system", "content": SYSTEM_PROMPT},
@@ -94,10 +127,8 @@ def run_analyst_agent(
                 if status_callback:
                     status_callback("info", "Executing recovered quantitative code...")
                 out, p_bytes, x_bytes = tool_python_interpreter(recovered, hitl_enabled=hitl_enabled)
-                if p_bytes:
-                    generated_plot = p_bytes
-                if x_bytes:
-                    generated_excel = x_bytes
+                if p_bytes: generated_plot = p_bytes
+                if x_bytes: generated_excel = x_bytes
                 tool_outputs.append(f"[python_interpreter]:\n{out}")
                 scratchpad.append({"role": "tool", "tool_call_id": "call_rec", "name": "python_interpreter", "content": out})
                 break
@@ -119,10 +150,8 @@ def run_analyst_agent(
 
                 if fn_name == "python_interpreter":
                     out, p_bytes, x_bytes = tool_python_interpreter(args.get("code", ""), hitl_enabled=hitl_enabled)
-                    if p_bytes:
-                        generated_plot = p_bytes
-                    if x_bytes:
-                        generated_excel = x_bytes
+                    if p_bytes: generated_plot = p_bytes
+                    if x_bytes: generated_excel = x_bytes
                     res = out
                 elif fn_name == "get_financial_data":
                     res = tool_get_financial_data(args.get("ticker", ""))
@@ -137,7 +166,7 @@ def run_analyst_agent(
             final_text = msg.content or ""
             break
 
-    # Final Executive Synthesis
+    # Synthesis Turn
     if tool_outputs and not final_text:
         if status_callback:
             status_callback("info", "Generating executive valuation briefing...")
@@ -146,13 +175,15 @@ def run_analyst_agent(
                 model=active_model,
                 messages=[
                     {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": f"Query: {user_input}\n\nTool Results:\n" + "\n\n".join(tool_outputs) + "\n\nProvide the final executive valuation briefing in clean Markdown tables."}
+                    {"role": "user", "content": f"Query: {user_input}\n\nTool Results:\n" + "\n\n".join(tool_outputs) + "\n\nFormat these quantitative valuation results into a clean executive Markdown briefing."}
                 ],
                 max_tokens=2048
             )
             final_text = synth.choices[0].message.content or "Analysis complete."
-        except Exception as e:
-            final_text = f"Synthesis note: {e}"
+        except Exception:
+            # Fallback directly to computed outputs if synthesis encounters an API issue
+            formatted_outputs = "\n\n".join(tool_outputs)
+            final_text = f"### 📊 Valuation Analysis Completed\n\n{formatted_outputs}"
 
     elapsed = time.perf_counter() - start_time
     return final_text, generated_plot, generated_excel, elapsed
