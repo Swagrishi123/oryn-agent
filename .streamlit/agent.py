@@ -35,24 +35,18 @@ COMMON_ENGLISH_STOPWORDS = {
 SYSTEM_PROMPT = (
     "You are ORYN Analyst, an elite institutional BFSI quantitative analyst and research advisor.\n\n"
     "CRITICAL CONTEXT & FACT PROTOCOL:\n"
-    "- When [VERIFIED LIVE EXCHANGE DATA] or [VERIFIED LIVE WEB RESEARCH] is provided in the prompt, "
-    "you MUST base your analysis strictly on those fresh live facts.\n"
-    "- If asked who holds a public office or leadership position, name the incumbent, their tenure, and predecessor directly.\n\n"
+    "- When [VERIFIED LIVE EXCHANGE DATA] or [VERIFIED LIVE RESEARCH - RECENT HEADLINES & RECORDS] is provided, "
+    "you MUST base your response strictly on those fresh live facts.\n"
+    "- If asked who holds a public office or leadership position (e.g., Governor of Jharkhand, Governor of Bihar, RBI Governor), "
+    "identify the incumbent from the live headlines, state their tenure start, and note their predecessor.\n\n"
     "CRITICAL PRESENTATION & TABLE RULES:\n"
-    "1. DIRECT STRUCTURAL DELIVERY: Eliminate introductory pleasantries. Begin directly with the answer or report title.\n"
-    "2. EXECUTIVE CLARITY FOR FACTUAL QUERIES: Give a clear, direct answer first. "
-    "If providing a table, ALWAYS include the separator row (| :--- | :--- |) immediately after the header.\n"
+    "1. DIRECT STRUCTURAL DELIVERY: Eliminate introductory pleasantries. Begin directly with the answer.\n"
+    "2. STRICT PROHIBITION ON HTML TABLES: NEVER output <table>, <tr>, <td>, or <th> tags. "
+    "Always format tables using standard Markdown pipes (|) and header divider rows (| :--- | :--- |).\n"
     "3. INSTITUTIONAL RESTRUCTURING & WATERFALL RULES:\n"
     "   - Always present priority distributions inside a single consolidated Markdown table.\n"
     "   - Sum total prepetition claims accurately before calculating recoveries.\n"
-    "4. FIG & BANKING REASONING:\n"
-    "   - Asset-sensitive banks face NIM COMPRESSION during rate cuts.\n"
-    "   - High deposit beta cushions NIM; low deposit beta causes severe compression.\n"
-    "   - Rate cuts increase bond prices, reversing AFS paper losses and boosting TCE.\n"
-    "5. LEVERAGED FINANCE (LEVFIN) RULES:\n"
-    "   - Subordinated/unsecured debt MUST price HIGHER than senior secured debt.\n"
-    "   - Sources & Uses percentages must sum to exactly 100.0%.\n"
-    "6. DCF MODELING: For DCF requests, execute quantitative schedules, render a matplotlib chart, and write 'model.xlsx'."
+    "4. DCF MODELING: For DCF requests, execute quantitative schedules, render a matplotlib chart, and write 'model.xlsx'."
 )
 
 CACHED_WORKING_MODEL = None
@@ -128,42 +122,67 @@ def extract_and_fetch_live_data(prompt: str, status_callback=None) -> str:
                 "\n".join(market_rows)
             )
 
-    # 2. Autonomous Dynamic Web Search for General Knowledge & Institutional Facts
+    # 2. Autonomous Live Web Search for General Knowledge, Leadership & Macro Queries
     is_gk_query = any(w in p_lower for w in [
         "who is", "who was", "current governor", "current chief", "current minister",
-        "governor of", "cm of", "ceo of", "chairman of", "president of", "latest",
-        "news", "holding office", "incumbent", "tenure"
-    ]) or ("governor" in p_lower and not target_tickers)
+        "governor of", "cm of", "ceo of", "chairman of", "president of", "what is",
+        "latest", "tenure", "rbi", "sebi", "news"
+    ]) or ("governor" in p_lower and not target_tickers) or (not target_tickers and "?" in prompt)
 
     if is_gk_query:
         if status_callback:
-            status_callback("info", "Autonomous web search: scraping live verified records...")
+            status_callback("info", "Autonomous live research: fetching verified records via syndication feed...")
         scraped_intel = dynamic_web_search(prompt)
         if scraped_intel:
             injected_context.append(
-                f"[VERIFIED LIVE WEB RESEARCH - RECENT INFORMATION]:\n{scraped_intel}"
+                f"[VERIFIED LIVE RESEARCH - RECENT HEADLINES & RECORDS]:\n{scraped_intel}"
             )
 
     if injected_context:
         return "\n\n" + "\n\n".join(injected_context) + "\n\n"
     return ""
 
+def convert_html_tables_to_markdown(text: str) -> str:
+    """Converts HTML table tags to Markdown so Streamlit won't strip them into run-on text."""
+    table_pattern = re.compile(r'<table[^>]*>(.*?)</table>', re.DOTALL | re.IGNORECASE)
+    
+    def replace_table(match):
+        table_content = match.group(1)
+        rows = re.findall(r'<tr[^>]*>(.*?)</tr>', table_content, re.DOTALL | re.IGNORECASE)
+        md_rows = []
+        for r in rows:
+            cells = re.findall(r'<t[hd][^>]*>(.*?)</t[hd]>', r, re.DOTALL | re.IGNORECASE)
+            clean_cells = [re.sub(r'<[^>]+>', '', c).strip() for c in cells]
+            if clean_cells:
+                md_rows.append("| " + " | ".join(clean_cells) + " |")
+        
+        if len(md_rows) >= 2:
+            num_cols = len(md_rows[0].split('|')) - 2
+            divider = "| " + " | ".join([":---"] * num_cols) + " |"
+            md_rows.insert(1, divider)
+            return "\n\n" + "\n".join(md_rows) + "\n\n"
+        return "\n".join(md_rows)
+
+    return table_pattern.sub(replace_table, text)
+
 def sanitize_report_formatting(text: str) -> str:
-    """Robust Markdown repair pipeline that fixes missing table boundaries and dividers."""
-    cleaned = re.sub(r'```(?:python)?\s*[\s\S]*?```', '', text)
+    """Repairs tables, fixes delimiters, and prevents text concatenation."""
+    # 1. Convert HTML tables to Markdown
+    cleaned = convert_html_tables_to_markdown(text)
+    cleaned = re.sub(r'```(?:python)?\s*[\s\S]*?```', '', cleaned)
     cleaned = re.sub(r'\|\s*\|', '|\n|', cleaned)
 
+    # 2. Ensure valid Markdown table row boundaries and dividers
     lines = cleaned.split('\n')
     output = []
-    current_table_lines = []
+    current_table = []
 
-    def flush_table(tbl):
+    def flush_tbl(tbl):
         if not tbl:
             return []
         if len(tbl) >= 2 and not any('---' in r for r in tbl[:2]):
             header_cols = [c.strip() for c in tbl[0].strip('|').split('|')]
-            num_cols = len(header_cols)
-            divider = "| " + " | ".join([":---"] * num_cols) + " |"
+            divider = "| " + " | ".join([":---"] * len(header_cols)) + " |"
             tbl.insert(1, divider)
         return [""] + tbl + [""]
 
@@ -174,17 +193,18 @@ def sanitize_report_formatting(text: str) -> str:
                 stripped = '| ' + stripped
             if not stripped.endswith('|'):
                 stripped = stripped + ' |'
-            current_table_lines.append(stripped)
+            current_table.append(stripped)
         else:
-            if current_table_lines:
-                output.extend(flush_table(current_table_lines))
-                current_table_lines = []
+            if current_table:
+                output.extend(flush_tbl(current_table))
+                current_table = []
             output.append(line)
 
-    if current_table_lines:
-        output.extend(flush_table(current_table_lines))
+    if current_table:
+        output.extend(flush_tbl(current_table))
 
     res = '\n'.join(output)
+    # 3. Insert space after currency symbols to prevent KaTeX math mode
     res = re.sub(r'\$([0-9])', r'$ \1', res)
     return re.sub(r'\n{3,}', '\n\n', res).strip()
 
