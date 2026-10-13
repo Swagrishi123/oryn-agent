@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 from groq import Groq
 from tools import (
     AGENT_TOOLS, 
+    COMMON_ENGLISH_STOPWORDS,
     tool_get_financial_data, 
     fetch_institutional_officeholder_facts,
     tool_web_search
@@ -70,34 +71,36 @@ KNOWN_ENTITIES = {
 }
 
 def extract_and_fetch_live_data(prompt: str, status_callback=None) -> str:
-    """Pre-detects company tickers or institutional leadership queries and injects verified facts."""
     injected_context = []
     p_lower = prompt.lower()
 
-    # 1. Macro & Institutional Officeholders (e.g., RBI Governor)
+    # 1. Macro / Officeholder Check
     macro_facts = fetch_institutional_officeholder_facts(prompt)
     if macro_facts:
         if status_callback:
             status_callback("info", "Retrieved verified institutional officeholder records...")
         injected_context.append(macro_facts)
 
-    # 2. Equity Tickers & Companies
+    # 2. Hardened Equity Discovery
     found_tickers = set()
     for name, sym in KNOWN_ENTITIES.items():
         if re.search(r'\b' + re.escape(name) + r'\b', p_lower):
             found_tickers.add(sym)
 
+    # Extract uppercase tokens, strictly filtering out English stopwords
     raw_candidates = re.findall(r'\b[A-Z]{2,10}\b', prompt)
-    ignored = {"USD", "INR", "NSE", "BSE", "PE", "EV", "DIP", "EBITDA", "FCF", "APR", "LBO", "DCF", "WACC", "TCE", "NIM", "RBI"}
     for c in raw_candidates:
-        if c not in ignored:
+        if c not in COMMON_ENGLISH_STOPWORDS:
             found_tickers.add(c)
 
-    if found_tickers:
+    # Hard-limit to max 4 lookups to prevent network throttling
+    target_tickers = list(found_tickers)[:4]
+
+    if target_tickers:
         market_rows = []
-        for ticker in found_tickers:
+        for ticker in target_tickers:
             if status_callback:
-                status_callback("info", f"Retrieving live metrics for {ticker}...")
+                status_callback("info", f"Retrieving verified market metrics for {ticker}...")
             try:
                 data = tool_get_financial_data(ticker)
                 price = data.get("current_price", "N/A")
@@ -128,7 +131,7 @@ def extract_and_fetch_live_data(prompt: str, status_callback=None) -> str:
     return ""
 
 def sanitize_report_formatting(text: str) -> str:
-    """Repairs tables and ensures every table row is valid Markdown with newlines."""
+    """Canonical Markdown repair pipeline."""
     cleaned = re.sub(r'```(?:python)?\s*[\s\S]*?```', '', text)
     cleaned = re.sub(r'\|\s*\|', '|\n|', cleaned)
 
@@ -278,9 +281,10 @@ def generate_deterministic_dcf_artifacts(user_input: str) -> tuple[str, bytes, b
     ax.bar(['PV Cash Flows', 'PV Terminal Value'], [sum_pv_ufcf, pv_tv], color=['#4a148c', '#7b1fa2'], width=0.45)
     ax.set_title(f'Enterprise Value: ${ev:.2f}M', fontsize=12, fontweight='bold')
     plt.tight_layout()
+    
     img_buf = io.BytesIO()
     plt.savefig(img_buf, format='png', dpi=200)
-    plt.close(fig)
+    plt.close('all')  # Prevent memory leakage
 
     excel_buf = io.BytesIO()
     with pd.ExcelWriter(excel_buf, engine='openpyxl') as writer:
@@ -316,7 +320,6 @@ def run_analyst_agent(
         briefing_text, plot_bytes, excel_bytes = generate_deterministic_dcf_artifacts(user_input)
         return sanitize_report_formatting(briefing_text), plot_bytes, excel_bytes, time.perf_counter() - start_time
 
-    # Context injection for equities and macro leadership queries
     context_data = extract_and_fetch_live_data(user_input, status_callback=status_callback)
     augmented_prompt = user_input + context_data
 
