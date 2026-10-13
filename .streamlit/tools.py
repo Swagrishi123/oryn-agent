@@ -46,16 +46,18 @@ INSTITUTIONAL_BENCHMARKS = {
 }
 
 def extract_core_entity(query: str) -> str:
-    """Strips conversational noise to isolate the underlying search entity."""
+    """Strips conversational noise and corrects common spellings to isolate the entity."""
     clean = re.sub(
-        r'(?i)\b(who is the founder of|who founded|founder of|founders of|who is the ceo of|ceo of|'
-        r'who is the governor of|current governor of|governor of|who is the cm of|cm of|chief minister of|'
-        r'who is the president of|who is the chairman of|who is the head of|head of|who is|who was|'
-        r'what is|what was|tell me about|current stock market price of|stock price of|price of)\b',
+        r'(?i)\b(who is the current|who is the latest|who is the|current|latest|who was the|who was|'
+        r'founder of|founders of|who founded|ceo of|governor of|cm of|chief minister of|president of|'
+        r'chairman of|head of|what is the|tell me about|stock price of|price of)\b',
         '',
         query
     )
     clean = re.sub(r'[,?!\'\"]', '', clean).strip()
+    # Correct common entity misspellings
+    clean = re.sub(r'(?i)\bmaharastra\b', 'Maharashtra', clean)
+    clean = re.sub(r'(?i)\bbengal\b', 'West Bengal', clean)
     return clean if len(clean) >= 2 else query.strip()
 
 def fetch_wikipedia_entity_summary(entity: str) -> str | None:
@@ -137,27 +139,34 @@ def fetch_google_news_rss(query: str, max_items: int = 3) -> str | None:
     return None
 
 def dynamic_web_search(query: str) -> str | None:
-    """Stratified retrieval across regulatory disclosures, news, and encyclopedic sources."""
+    """Stratified retrieval distinguishing between political and corporate governance."""
     clean_entity = extract_core_entity(query)
     findings = []
     p_lower = query.lower()
 
-    leadership_keywords = [
-        "chairman", "ceo", "md", "chief executive", "director",
-        "head of", "head", "governor", "president", "management", "who is the"
-    ]
-    is_leadership_query = any(k in p_lower for k in leadership_keywords)
+    # 1. Political Leadership (Chief Minister, Governor, Prime Minister)
+    is_political = any(k in p_lower for k in ["cm", "chief minister", "governor", "prime minister", "pm", "minister"])
+    
+    # 2. Corporate Governance (Chairman, CEO, MD, Director)
+    is_corporate = any(k in p_lower for k in ["chairman", "ceo", "md", "chief executive", "director", "head of", "head"])
 
-    if is_leadership_query:
+    if is_political:
+        pol_query = f"{clean_entity} Chief Minister OR CM \"takes oath\" OR \"sworn in\" OR current"
+        pol_intel = fetch_google_news_rss(pol_query, max_items=4)
+        if pol_intel:
+            findings.append(f"[OFFICIAL POLITICAL & GAZETTE RECORDS]:\n{pol_intel}")
+    elif is_corporate:
         appointment_query = f"{clean_entity} Chairman OR CEO OR MD appointed OR \"takes charge\" OR \"assumed office\""
         appointment_intel = fetch_google_news_rss(appointment_query, max_items=4)
         if appointment_intel:
             findings.append(f"[OFFICIAL APPOINTMENTS & GAZETTE RECORDS]:\n{appointment_intel}")
 
-    news_intel = fetch_google_news_rss(query, max_items=2)
+    # General media headlines fallback
+    news_intel = fetch_google_news_rss(f"{clean_entity} current", max_items=2)
     if news_intel and news_intel not in findings:
-        findings.append(f"[RECENT REGULATORY & MEDIA HEADLINES]:\n{news_intel}")
+        findings.append(f"[RECENT MEDIA HEADLINES]:\n{news_intel}")
 
+    # Wikipedia summary fallback
     wiki_intel = fetch_wikipedia_entity_summary(clean_entity)
     if wiki_intel:
         findings.append(wiki_intel)
