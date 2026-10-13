@@ -6,11 +6,15 @@ import datetime
 import importlib
 import sys
 
-# Ensure clean reload of agent from disk
-if "agent" in sys.modules:
-    importlib.reload(sys.modules["agent"])
+# Ensure clean reload of both tools and agent from disk
+for mod_name in ["tools", "agent"]:
+    if mod_name in sys.modules:
+        try:
+            importlib.reload(sys.modules[mod_name])
+        except Exception:
+            pass
+
 import agent
-importlib.reload(agent)
 from agent import run_analyst_agent, sanitize_report_formatting
 
 # --- Page Configuration ---
