@@ -37,25 +37,25 @@ FINANCIAL_ACRONYMS_BLACKLIST = {
 
 SYSTEM_PROMPT = (
     "You are ORYN Analyst, an elite institutional BFSI quantitative analyst and corporate intelligence advisor.\n\n"
-    "CRITICAL FACT PROTOCOL:\n"
-    "- When [VERIFIED LIVE EXCHANGE DATA] or [VERIFIED RESEARCH RECORDS] is provided, "
-    "base your response strictly on those verified facts. Never contradict the context.\n"
-    "- If asked who founded a company or holds public office, state the exact names and dates directly from the verified record.\n\n"
+    "CRITICAL CONTEXT & FACT PROTOCOL:\n"
+    "- When [VERIFIED LIVE EXCHANGE DATA] or [VERIFIED RESEARCH RECORDS] is provided in the prompt, "
+    "incorporate those verified facts into your response. Never contradict verified exchange quotes.\n"
+    "- For leadership, officeholders, founders, or encyclopedic facts: if the search records do not explicitly state "
+    "the answer, answer using your established factual baseline knowledge directly without refusing.\n\n"
     "CRITICAL FORMATTING & TABLE RULES (IMMUNITY TO KATEX COLLAPSE):\n"
     "1. DIRECT STRUCTURAL DELIVERY: Eliminate introductory pleasantries. Begin directly with the analysis header.\n"
     "2. NO DOLLAR SIGNS IN TABLES: NEVER use '$' inside table cells or column headers. "
-    "State currency in headers as 'USD M' or 'INR' (e.g., | Security Class | Total Claim (USD M) | Recovery (USD M) |). "
-    "Cell values MUST be pure numbers (e.g., | DIP Financing | 50.00 | 50.00 | 100.0% |).\n"
+    "State currency in headers as 'USD M' or 'INR' (e.g., | Year | Revenue (USD M) | EBITDA (USD M) |). "
+    "Cell values MUST be pure numbers (e.g., | 1 | 60.00 | 15.00 |).\n"
     "3. STRICT MARKDOWN TABLE SYNTAX: Every table row MUST start and end with a pipe (|). "
     "Always place the divider row (| :--- | :--- |) immediately below the header row. Never output raw HTML table tags.\n\n"
     "FINANCIAL REASONING & WATERFALL PROTOCOLS:\n"
     "1. CHAPTER 11 RESTRUCTURING WATERFALL:\n"
-    "   - Calculate claims strictly in linear priority order: DIP -> First Lien -> Second Lien -> Senior Unsecured -> Subordinated.\n"
-    "   - Tranche recovery = min(Claim, max(0, Remaining EV before tranche)).\n"
-    "   - Present the distribution in ONE unified Markdown table. Never debate, recalculate, or re-evaluate the table in subsequent paragraphs.\n"
+    "   - Calculate claims strictly in linear sequence: DIP -> First Lien -> Second Lien -> Senior Unsecured -> Subordinated.\n"
+    "   - Present the distribution in ONE unified Markdown table. Never debate or recalculate the table in subsequent text.\n"
     "   - The fulcrum security is the tranche that receives a partial recovery.\n"
     "2. FIG & ALM BANKING DYNAMICS:\n"
-    "   - A policy rate cut on an asset-sensitive bank causes Net Interest Margin (NIM) COMPRESSION because floating assets reprice downward faster than liabilities.\n"
+    "   - A policy rate cut on an asset-sensitive bank causes Net Interest Margin (NIM) COMPRESSION because floating assets reprice down faster than liabilities.\n"
     "   - High deposit beta cushions NIM compression (deposit costs drop quickly). Low deposit beta causes severe NIM compression.\n"
     "   - Falling benchmark yields increase bond prices, reversing unrealized losses in Available-For-Sale (AFS) portfolios, which directly EXPANDS Tangible Common Equity (TCE).\n"
     "3. DCF MODELING: Execute quantitative schedules, render matplotlib artifacts, and write 'model.xlsx'."
@@ -103,7 +103,7 @@ def extract_and_fetch_live_data(prompt: str, status_callback=None) -> str:
         if dt_clean not in FINANCIAL_ACRONYMS_BLACKLIST:
             found_tickers.add(dt_clean)
 
-    # Trigger stock search only if prompt explicitly requests equity metrics
+    # Search for capital tickers only if prompt requests equity metrics
     is_stock_request = any(k in p_lower for k in ["stock", "share", "price", "market cap", "52-week", "quote", "ticker"])
     if is_stock_request:
         raw_candidates = re.findall(r'\b[A-Z]{2,10}\b', prompt)
@@ -146,14 +146,13 @@ def extract_and_fetch_live_data(prompt: str, status_callback=None) -> str:
     # 2. General Knowledge / Leadership / Corporate Intelligence Research
     is_pure_stock_quote = bool(target_tickers) and is_stock_request
     if not is_pure_stock_quote:
-        # Avoid running search for pure quantitative modeling or restructuring prompts
-        if not any(w in p_lower for w in ["dcf", "discounted cash flow", "wacc", "waterfall", "restructuring", "ebitda margin"]):
+        if not any(w in p_lower for w in ["dcf", "discounted cash flow", "wacc", "waterfall", "restructuring"]):
             if status_callback:
                 status_callback("info", "Autonomous research: retrieving verified records...")
             scraped_intel = dynamic_web_search(prompt)
             if scraped_intel:
                 injected_context.append(
-                    f"[VERIFIED RESEARCH RECORDS - USE THESE FACTS EXCLUSIVELY]:\n{scraped_intel}"
+                    f"[VERIFIED RESEARCH RECORDS]:\n{scraped_intel}"
                 )
 
     if injected_context:
@@ -180,7 +179,6 @@ def sanitize_report_formatting(text: str) -> str:
 
     for line in lines:
         stripped = line.strip()
-        # Strip leading ordered list numbers (e.g., '1. | Company |' -> '| Company |')
         stripped = re.sub(r'^\d+[\.\)]\s*\|', '|', stripped)
         
         if '|' in stripped:
@@ -188,7 +186,6 @@ def sanitize_report_formatting(text: str) -> str:
                 stripped = '| ' + stripped
             if not stripped.endswith('|'):
                 stripped = stripped + ' |'
-            # Immunize table row from KaTeX: replace '$' inside tables with 'USD '
             stripped = stripped.replace('$', 'USD ')
             current_table.append(stripped)
         else:
@@ -201,7 +198,6 @@ def sanitize_report_formatting(text: str) -> str:
         output.extend(flush_tbl(current_table))
 
     res = '\n'.join(output)
-    # Immunize body text: replace all '$' followed by numbers with 'USD '
     res = re.sub(r'\$\s*([0-9])', r'USD \1', res)
     return re.sub(r'\n{3,}', '\n\n', res).strip()
 
@@ -269,7 +265,6 @@ def create_completion_with_fallback(client: Groq, preferred_model: str = None, s
     
     kwargs["max_tokens"] = min(kwargs.get("max_tokens", 800), 800)
     kwargs["temperature"] = kwargs.get("temperature", 0.1)
-    # Anti-repetition penalties prevent infinite loops
     kwargs["frequency_penalty"] = 0.15
     kwargs["presence_penalty"] = 0.1
     kwargs["model"] = active_model
@@ -315,19 +310,75 @@ def build_contextual_messages(user_input: str, system_prompt: str, max_turns: in
         pass
     return [{"role": "system", "content": system_prompt}] + history + [{"role": "user", "content": user_input}]
 
-def generate_deterministic_dcf_artifacts(user_input: str) -> tuple[str, bytes, bytes]:
+def parse_dcf_assumptions(prompt: str) -> dict:
+    """Parses dynamic DCF parameters from conversational input with fallback defaults."""
+    p_lower = prompt.lower()
+    
+    # 1. Growth rate
+    growth_match = re.search(r'(?:growing|growth rate|revenue growth|growth)[\s:]*(?:at\s*)?([0-9.]+)%', p_lower)
+    growth = float(growth_match.group(1)) / 100.0 if growth_match else 0.20
+
+    # 2. Starting Revenue / Year-1 Revenue
+    y1_match = re.search(r'(?:year[\s-]*1\s*revenue|revenue\s*in\s*year[\s-]*1)[\s:]*(?:usd|\$)?\s*([0-9.]+)\s*(m|million)?', p_lower)
+    rev_match = re.search(r'(?:revenue|rev)[\s:]*(?:of\s*)?(?:usd|\$)?\s*([0-9.]+)\s*(m|million)?', p_lower)
+    
+    if y1_match:
+        y1_val = float(y1_match.group(1))
+        base_revenue = y1_val / (1.0 + growth) if growth > -0.99 else y1_val
+    elif rev_match:
+        base_revenue = float(rev_match.group(1))
+    else:
+        base_revenue = 50.0
+
+    # 3. EBITDA Margin
+    margin_match = re.search(r'(?:ebitda margin|margin|ebitda)[\s:]*(?:apparently\s*)?([0-9.]+)%', p_lower)
+    margin = float(margin_match.group(1)) / 100.0 if margin_match else 0.25
+
+    # 4. WACC / Discount Rate
+    wacc_match = re.search(r'(?:wacc|discount rate|cost of capital)[\s:]*(?:apparently\s*)?([0-9.]+)%', p_lower)
+    wacc = float(wacc_match.group(1)) / 100.0 if wacc_match else 0.10
+
+    # 5. Terminal Growth Rate
+    tv_match = re.search(r'(?:terminal growth|terminal rate|perpetual growth)[\s:]*(?:apparently\s*)?([0-9.]+)%', p_lower)
+    tv_rate = float(tv_match.group(1)) / 100.0 if tv_match else 0.025
+
+    return {
+        "base_revenue": base_revenue,
+        "growth": growth,
+        "margin": margin,
+        "wacc": wacc,
+        "tv_rate": tv_rate
+    }
+
+def generate_deterministic_dcf_artifacts(user_input: str) -> tuple[str, bytes | None, bytes | None]:
+    params = parse_dcf_assumptions(user_input)
+    base_rev = params["base_revenue"]
+    growth = params["growth"]
+    margin = params["margin"]
+    wacc = params["wacc"]
+    tv_rate = params["tv_rate"]
     years = 5
+
+    # Gordon Growth Model validation: terminal growth must be strictly lower than discount rate
+    if tv_rate >= wacc:
+        err_msg = (
+            f"⚠️ **DCF Model Exception**: Terminal growth rate ({tv_rate:.1%}) must be strictly less than "
+            f"WACC ({wacc:.1%}) to avoid a mathematical divergence in the Gordon Growth calculation."
+        )
+        return err_msg, None, None
+
     years_idx = list(range(1, years + 1))
-    rev = [50.0 * ((1 + 0.20) ** t) for t in years_idx]
-    ebitda = [r * 0.25 for r in rev]
-    df = [1 / ((1 + 0.10) ** t) for t in years_idx]
+    rev = [base_rev * ((1 + growth) ** t) for t in years_idx]
+    ebitda = [r * margin for r in rev]
+    df = [1 / ((1 + wacc) ** t) for t in years_idx]
+    
+    # Standard UFCF modeling convention
     pv_ufcf = [u * d for u, d in zip(ebitda, df)]
     sum_pv_ufcf = sum(pv_ufcf)
-    tv = (ebitda[-1] * 1.025) / (0.10 - 0.025)
-    pv_tv = tv / (1.10 ** years)
+    tv = (ebitda[-1] * (1 + tv_rate)) / (wacc - tv_rate)
+    pv_tv = tv / ((1 + wacc) ** years)
     ev = sum_pv_ufcf + pv_tv
 
-    # KaTeX-immune table structure: currency specified in header, numerical values in cells
     df_proj = pd.DataFrame({
         "Year": [str(y) for y in years_idx],
         "Revenue (USD M)": [f"{x:.2f}" for x in rev],
@@ -358,6 +409,7 @@ def generate_deterministic_dcf_artifacts(user_input: str) -> tuple[str, bytes, b
         f"### 📊 Institutional DCF Valuation Schedule\n\n"
         f"**Implied Enterprise Value:** **USD {ev:.2f}M**\n\n"
         f"{table_md}\n\n"
+        f"* **Model Assumptions:** Year-1 Rev: USD {rev[0]:.2f}M | Growth: {growth:.1%} | Margin: {margin:.1%} | WACC: {wacc:.1%} | Terminal Rate: {tv_rate:.1%}\n"
         f"* **Cumulative PV of Cash Flows:** USD {sum_pv_ufcf:.2f}M\n"
         f"* **Terminal Value (TV):** USD {tv:.2f}M\n"
         f"* **Present Value of TV:** USD {pv_tv:.2f}M\n"
