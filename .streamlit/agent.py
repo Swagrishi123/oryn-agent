@@ -29,12 +29,6 @@ VALUATION_KEYWORDS = [
     "cash flow", "excel", "lbo", "irr", "npv", "unlevered"
 ]
 
-# Block all models that throw 404 or language mismatches on standard Groq tiers
-MODEL_BLACKLIST = [
-    "guard", "whisper", "vision", "embed", "audio", "orpheus",
-    "allam", "arabic", "safeguard", "llama-3.3", "llama-3.1"
-]
-
 CACHED_WORKING_MODEL = None
 
 def extract_code_from_markdown(text: str) -> str | None:
@@ -82,7 +76,7 @@ def resolve_api_key(api_key: str = "") -> str:
     return os.environ.get("GROQ_API_KEY", "").strip()
 
 def get_best_available_model(client: Groq, force_refresh: bool = False) -> str:
-    """Selects universally active production models (llama3-8b-8192) that never return 404."""
+    """Discovers an accessible active model dynamically via live ping tests."""
     global CACHED_WORKING_MODEL
     if CACHED_WORKING_MODEL and not force_refresh:
         return CACHED_WORKING_MODEL
@@ -93,22 +87,30 @@ def get_best_available_model(client: Groq, force_refresh: bool = False) -> str:
     except Exception:
         available_ids = []
 
+    # Filter out decommissioned models, non-chat models, and non-English models
+    filter_out = [
+        "llama3-8b-8192", "llama3-70b-8192", "mixtral", "gemma",
+        "whisper", "vision", "embed", "audio", "orpheus",
+        "allam", "arabic", "safeguard", "guard"
+    ]
     candidates = [
         mid for mid in available_ids
-        if "/" not in mid and not any(b in mid.lower() for b in MODEL_BLACKLIST)
+        if "/" not in mid and not any(b in mid.lower() for b in filter_out)
     ]
 
-    # Models supported on standard Groq tiers
-    priority = [
-        "llama3-8b-8192",
-        "llama3-70b-8192",
-        "mixtral-8x7b-32768",
-        "gemma2-9b-it"
+    # Modern, active Groq models in prioritized order
+    preference = [
+        "llama-3.2-3b-preview",
+        "llama-3.2-1b-preview",
+        "llama-3.1-8b-instant",
+        "llama-3.3-70b-versatile",
+        "deepseek-r1-distill-llama-70b",
+        "qwen-2.5-32b"
     ]
 
-    test_queue = [m for m in priority if m in candidates] + [m for m in candidates if m not in priority]
+    test_queue = [m for m in preference if m in candidates] + [m for m in candidates if m not in preference]
     if not test_queue:
-        test_queue = priority
+        test_queue = preference
 
     for model_name in test_queue:
         try:
@@ -122,14 +124,15 @@ def get_best_available_model(client: Groq, force_refresh: bool = False) -> str:
         except Exception:
             continue
 
-    CACHED_WORKING_MODEL = "llama3-8b-8192"
-    return CACHED_WORKING_MODEL
+    avail_str = ", ".join(available_ids) if available_ids else "None found"
+    raise RuntimeError(f"Could not connect to any active Groq text model. Available IDs on your key: [{avail_str}]")
 
 def create_completion_with_fallback(client: Groq, preferred_model: str = None, status_callback=None, **kwargs):
-    """Executes Groq completions with automatic model failover if an access error occurs."""
+    """Executes Groq completions with automatic model failover if any 400/404 error occurs."""
     global CACHED_WORKING_MODEL
     
-    if preferred_model and not any(b in preferred_model.lower() for b in MODEL_BLACKLIST):
+    filter_out = ["llama3-8b-8192", "llama3-70b-8192", "mixtral", "gemma", "allam", "arabic"]
+    if preferred_model and not any(b in preferred_model.lower() for b in filter_out):
         active_model = preferred_model
     else:
         active_model = get_best_available_model(client)
@@ -140,7 +143,7 @@ def create_completion_with_fallback(client: Groq, preferred_model: str = None, s
         return client.chat.completions.create(**kwargs)
     except Exception as e:
         err_str = str(e).lower()
-        if "404" in err_str or "model_not_found" in err_str or "access" in err_str:
+        if "404" in err_str or "model_not_found" in err_str or "decommissioned" in err_str or "400" in err_str or "access" in err_str:
             if status_callback:
                 status_callback("info", f"Model `{active_model}` not accessible. Auto-switching to working model...")
             active_model = get_best_available_model(client, force_refresh=True)
@@ -162,10 +165,10 @@ def parse_prompt_financial_parameters(prompt: str) -> tuple[float, float, float,
     margin_match = re.search(r'(\d+(?:\.\d+)?)\s*%\s*ebitda', p)
     margin = float(margin_match.group(1)) / 100.0 if margin_match else 0.25
 
-    wacc_match = re.search(r'(\d+(?:\.\d+)?)\s*%\s*wacc', p)
+    wacc_match = re.search(r'(\\d+(?:\\.\\d+)?)\\s*%\\s*wacc', p)
     wacc = float(wacc_match.group(1)) / 100.0 if wacc_match else 0.10
 
-    tg_match = re.search(r'(\d+(?:\.\d+)?)\s*%\s*terminal\s*(?:growth)?', p)
+    tg_match = re.search(r'(\\d+(?:\\.\\d+)?)\\s*%\\s*terminal\\s*(?:growth)?', p)
     tg = float(tg_match.group(1)) / 100.0 if tg_match else 0.025
 
     return base_rev, growth, margin, wacc, tg, 5
