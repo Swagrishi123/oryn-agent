@@ -37,11 +37,12 @@ FINANCIAL_ACRONYMS_BLACKLIST = {
 
 SYSTEM_PROMPT = (
     "You are ORYN Analyst, an elite institutional BFSI quantitative analyst and corporate intelligence advisor.\n\n"
-    "CRITICAL CONTEXT & FACT PROTOCOL:\n"
-    "- When [VERIFIED LIVE EXCHANGE DATA] or [VERIFIED RESEARCH RECORDS] is provided in the prompt, "
-    "incorporate those verified facts into your response. Never contradict verified exchange quotes.\n"
-    "- For leadership, officeholders, founders, or encyclopedic facts: if the search records do not explicitly state "
-    "the answer, answer using your established factual baseline knowledge directly without refusing.\n\n"
+    "CRITICAL CONTEXT & DATA FRESHNESS PROTOCOL:\n"
+    "1. PROVENANCE & DATES: When reporting corporate leadership, board executives, or regulatory officeholders, "
+    "ALWAYS prioritize recent date-stamped regulatory disclosures and appointment announcements over static encyclopedic summaries.\n"
+    "2. CORPORATE RESTRUCTURING: If a firm phased out the title 'Chairman' in favor of 'CEO & MD' (such as LIC), "
+    "explicitly state the current executive head (CEO & MD) and mention their appointment/effective date. Never present a former incumbent as active.\n"
+    "3. MARKET DATA GATING: Only include stock price and market capitalization tables if the user specifically requested stock, share, or market pricing metrics.\n\n"
     "CRITICAL FORMATTING & TABLE RULES (IMMUNITY TO KATEX COLLAPSE):\n"
     "1. DIRECT STRUCTURAL DELIVERY: Eliminate introductory pleasantries. Begin directly with the analysis header.\n"
     "2. NO DOLLAR SIGNS IN TABLES: NEVER use '$' inside table cells or column headers. "
@@ -94,26 +95,34 @@ def extract_and_fetch_live_data(prompt: str, status_callback=None) -> str:
     injected_context = []
     p_lower = prompt.lower()
 
-    # 1. Intent-Gated Equity Discovery
-    found_tickers = set()
-    for name, sym in KNOWN_ENTITIES.items():
-        if re.search(r'\b' + re.escape(name) + r'\b', p_lower):
-            found_tickers.add(sym)
+    # 1. Intent-Gated Equity Discovery: ONLY search stocks if user asks about equity/pricing metrics
+    stock_keywords = [
+        "stock", "share", "shares", "price", "market cap", "valuation",
+        "52-week", "quote", "ticker", "trading at", "pe ratio", "dividend",
+        "rupees", "inr", "usd", "market price"
+    ]
+    has_dollar_ticker = bool(re.search(r'\$[A-Za-z]{2,10}\b', prompt))
+    is_stock_request = any(k in p_lower for k in stock_keywords) or has_dollar_ticker
 
-    dollar_tickers = re.findall(r'\$([A-Za-z]{2,10})\b', prompt)
-    for dt in dollar_tickers:
-        dt_clean = dt.upper()
-        if dt_clean not in FINANCIAL_ACRONYMS_BLACKLIST:
-            found_tickers.add(dt_clean)
-
-    is_stock_request = any(k in p_lower for k in ["stock", "share", "price", "market cap", "52-week", "quote", "ticker"])
+    target_tickers = []
     if is_stock_request:
+        found_tickers = set()
+        for name, sym in KNOWN_ENTITIES.items():
+            if re.search(r'\b' + re.escape(name) + r'\b', p_lower):
+                found_tickers.add(sym)
+
+        dollar_tickers = re.findall(r'\$([A-Za-z]{2,10})\b', prompt)
+        for dt in dollar_tickers:
+            dt_clean = dt.upper()
+            if dt_clean not in FINANCIAL_ACRONYMS_BLACKLIST:
+                found_tickers.add(dt_clean)
+
         raw_candidates = re.findall(r'\b[A-Z]{2,10}\b', prompt)
         for c in raw_candidates:
             if c not in FINANCIAL_ACRONYMS_BLACKLIST:
                 found_tickers.add(c)
 
-    target_tickers = list(found_tickers)[:4]
+        target_tickers = list(found_tickers)[:4]
 
     if target_tickers:
         market_rows = []
@@ -375,7 +384,6 @@ def generate_deterministic_dcf_artifacts(user_input: str) -> tuple[str, bytes | 
     tv_rate = params["tv_rate"]
     years = 5
 
-    # Gordon Growth Model validation: terminal growth must be strictly lower than discount rate
     if tv_rate >= wacc:
         err_msg = (
             f"⚠️ **DCF Model Exception**: Terminal growth rate ({tv_rate:.1%}) must be strictly less than "
@@ -388,7 +396,6 @@ def generate_deterministic_dcf_artifacts(user_input: str) -> tuple[str, bytes | 
     ebitda = [r * margin for r in rev]
     df = [1 / ((1 + wacc) ** t) for t in years_idx]
     
-    # Standard UFCF modeling convention
     pv_ufcf = [u * d for u, d in zip(ebitda, df)]
     sum_pv_ufcf = sum(pv_ufcf)
     tv = (ebitda[-1] * (1 + tv_rate)) / (wacc - tv_rate)
