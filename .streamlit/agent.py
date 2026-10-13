@@ -393,7 +393,7 @@ def generate_deterministic_dcf_artifacts(user_input: str) -> tuple[str, bytes | 
     divider = '| ' + ' | '.join([':---'] * len(df_proj.columns)) + ' |'
     rows = ['| ' + ' | '.join(map(str, row)) + ' |' for row in df_proj.values]
     table = '\n'.join([headers, divider] + rows)
-    assumptions = (f'- Revenue basis: {revenue_basis}\n- Year-0 starting revenue: USD {base_revenue:.2f}M\n- Revenue growth: {growth:.2%}\n- EBITDA margin: {ebitda_margin:.2%}\n- WACC: {wacc:.2%}\n- Terminal growth: {terminal_growth:.2%}\n- Illustrative defaults: tax {tax_rate:.0%}, D&A {da_pct:.0%} of revenue, CapEx {capex_pct:.0%} of revenue, change in NWC {nwc_pct:.0%} of incremental revenue.')
+    assumptions = (f'- Revenue basis: {revenue_basis}\n- Year-0 starting revenue: USD {base_revenue:.2f}M\n- Annual revenue growth: {growth:.2%}\n- EBITDA margin: {ebitda_margin:.2%}\n- WACC: {wacc:.2%}\n- Terminal growth: {terminal_growth:.2%}\n- Illustrative defaults: tax {tax_rate:.0%}, D&A {da_pct:.0%} of revenue, CapEx {capex_pct:.0%} of revenue, change in NWC {nwc_pct:.0%} of incremental revenue.')
     report = (f'### Illustrative DCF Valuation\n\n**Implied Enterprise Value: USD {ev:.2f}M**\n\n**Important:** This is not a verified valuation of Reliance Industries. Validate all inputs against company financial statements.\n\n**Assumptions**\n{assumptions}\n\n{table}\n\n- Present value of projected UFCF: USD {pv_cashflows:.2f}M\n- Terminal value: USD {terminal_value:.2f}M\n- Present value of terminal value: USD {pv_terminal:.2f}M\n- Enterprise value = PV of projected UFCF + PV of terminal value.')
     return report, img_buf.getvalue(), excel_buf.getvalue()
 def run_analyst_agent(
