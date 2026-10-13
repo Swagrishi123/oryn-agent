@@ -2,48 +2,12 @@ import json
 import re
 import urllib.parse
 import xml.etree.ElementTree as ET
+from datetime import datetime, timezone
 import requests
 import yfinance as yf
 
-# Institutional Baseline Benchmarks for Indian Equities
-INSTITUTIONAL_BENCHMARKS = {
-    "RELIANCE": {
-        "company_name": "Reliance Industries Limited",
-        "ticker_resolved": "RELIANCE.NS",
-        "current_price": "₹1,285.40",
-        "market_cap": "₹17,39,450 Cr",
-        "52w_high": "₹1,608.80",
-        "52w_low": "₹1,180.20",
-        "currency": "INR"
-    },
-    "TCS": {
-        "company_name": "Tata Consultancy Services Limited",
-        "ticker_resolved": "TCS.NS",
-        "current_price": "₹3,960.25",
-        "market_cap": "₹14,32,800 Cr",
-        "52w_high": "₹4,585.90",
-        "52w_low": "₹3,312.00",
-        "currency": "INR"
-    },
-    "INFY": {
-        "company_name": "Infosys Limited",
-        "ticker_resolved": "INFY.NS",
-        "current_price": "₹1,885.50",
-        "market_cap": "₹7,82,400 Cr",
-        "52w_high": "₹1,991.45",
-        "52w_low": "₹1,358.35",
-        "currency": "INR"
-    },
-    "HDFCBANK": {
-        "company_name": "HDFC Bank Limited",
-        "ticker_resolved": "HDFCBANK.NS",
-        "current_price": "₹1,745.80",
-        "market_cap": "₹13,28,900 Cr",
-        "52w_high": "₹1,794.00",
-        "52w_low": "₹1,363.55",
-        "currency": "INR"
-    }
-}
+# No hardcoded prices are used as fallbacks: unavailable data must remain unavailable.
+INSTITUTIONAL_BENCHMARKS = {}
 
 def extract_core_entity(query: str) -> str:
     """Strips conversational phrases to isolate the search entity."""
@@ -74,7 +38,7 @@ def fetch_wikipedia_entity_summary(entity: str) -> str | None:
                     if s_res.status_code == 200:
                         extract = s_res.json().get("extract", "")
                         if extract and len(extract) > 40:
-                            return f"• [{title} Verified Record]: {extract}"
+                            return f"• [Wikipedia result: {title}; source: Wikipedia]: {extract}"
     except Exception:
         pass
     return None
@@ -127,7 +91,7 @@ def fetch_yahoo_v8_chart(symbol: str) -> dict | None:
         if res.status_code == 200:
             data = res.json()
             meta = data.get("chart", {}).get("result", [{}])[0].get("meta", {})
-            price = meta.get("regularMarketPrice") or meta.get("chartPreviousClose")
+            price = meta.get("regularMarketPrice")
             if price:
                 high_52 = meta.get("fiftyTwoWeekHigh", "N/A")
                 low_52 = meta.get("fiftyTwoWeekLow", "N/A")
@@ -138,7 +102,10 @@ def fetch_yahoo_v8_chart(symbol: str) -> dict | None:
                     "high_52": f"₹{float(high_52):,.2f}" if is_inr and isinstance(high_52, (int, float)) else str(high_52),
                     "low_52": f"₹{float(low_52):,.2f}" if is_inr and isinstance(low_52, (int, float)) else str(low_52),
                     "currency": curr,
-                    "symbol": symbol
+                    "symbol": symbol,
+                    "company_name": meta.get("longName") or meta.get("shortName") or symbol,
+                    "source": "Yahoo Finance chart endpoint",
+                    "retrieved_at_utc": datetime.now(timezone.utc).isoformat()
                 }
     except Exception:
         pass
@@ -161,7 +128,10 @@ def fetch_google_finance_metrics(symbol: str) -> dict | None:
                     return {
                         "price_formatted": f"₹{price_val:,.2f}",
                         "market_cap": mcap_match.group(1).strip() if mcap_match else "N/A",
-                        "symbol": f"{symbol}.{exch}"
+                        "symbol": f"{symbol}.{exch}",
+                        "company_name": symbol,
+                        "source": "Google Finance page",
+                        "retrieved_at_utc": datetime.now(timezone.utc).isoformat()
                     }
         except Exception:
             continue
@@ -178,19 +148,20 @@ def tool_get_financial_data(ticker: str) -> dict:
     for sym in candidates:
         y_data = fetch_yahoo_v8_chart(sym)
         if y_data:
-            gf_data = fetch_google_finance_metrics(clean_sym)
+            base_symbol = clean_sym.removesuffix(".NS").removesuffix(".BO")
+            gf_data = fetch_google_finance_metrics(base_symbol) if y_data.get("currency") == "INR" else None
             mcap = gf_data.get("market_cap") if gf_data else None
-            if not mcap and clean_sym in INSTITUTIONAL_BENCHMARKS:
-                mcap = INSTITUTIONAL_BENCHMARKS[clean_sym]["market_cap"]
 
             return {
-                "company_name": clean_sym,
+                "company_name": y_data.get("company_name", clean_sym),
                 "ticker_resolved": y_data["symbol"],
                 "current_price": y_data["price_formatted"],
                 "market_cap": mcap or "N/A",
                 "52w_high": y_data["high_52"],
                 "52w_low": y_data["low_52"],
-                "currency": y_data["currency"]
+                "currency": y_data["currency"],
+                "source": y_data.get("source", "Yahoo Finance chart endpoint"),
+                "retrieved_at_utc": y_data.get("retrieved_at_utc")
             }
 
     gf = fetch_google_finance_metrics(clean_sym)
@@ -202,11 +173,10 @@ def tool_get_financial_data(ticker: str) -> dict:
             "market_cap": gf["market_cap"],
             "52w_high": "N/A",
             "52w_low": "N/A",
-            "currency": "INR"
+            "currency": "INR",
+            "source": gf.get("source", "Google Finance page"),
+            "retrieved_at_utc": gf.get("retrieved_at_utc")
         }
-
-    if clean_sym in INSTITUTIONAL_BENCHMARKS:
-        return INSTITUTIONAL_BENCHMARKS[clean_sym]
 
     return {
         "company_name": clean_sym,
@@ -215,8 +185,11 @@ def tool_get_financial_data(ticker: str) -> dict:
         "market_cap": "N/A",
         "52w_high": "N/A",
         "52w_low": "N/A",
-        "currency": "INR"
+        "currency": "UNKNOWN",
+        "source": None,
+        "retrieved_at_utc": None,
+        "data_status": "unavailable"
     }
 
 def tool_web_search(query: str) -> str:
-    return dynamic_web_search(query) or f"Live search results for: '{query}'."
+    return dynamic_web_search(query) or "No search results were retrieved. Do not infer that a live search succeeded."
