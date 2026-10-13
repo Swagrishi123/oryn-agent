@@ -10,9 +10,9 @@ SYSTEM_PROMPT = (
     "You are ORYN Analyst, an institutional BFSI quantitative analyst.\n"
     "CORE RULES:\n"
     "1. For valuation and DCF models, compute deterministic cash flows, discounting, and sensitivity matrices using python_interpreter.\n"
-    "2. CRITICAL PYTHON RULE: All code executed in python_interpreter MUST be 100% self-contained and standalone.\n"
-    "   - Explicitly define ALL variables at the top of the script (e.g. base_revenue = 50e6, growth_rate = 0.20, ebitda_margin = 0.25, wacc = 0.10, terminal_growth = 0.025, years = 5).\n"
-    "   - NEVER reference undefined variables.\n"
+    "2. CRITICAL PYTHON RULE: All code in python_interpreter MUST be 100% self-contained.\n"
+    "   - Explicitly define ALL parameters at the top (base_revenue, growth_rate, ebitda_margin, wacc, terminal_growth, years = 5).\n"
+    "   - NEVER reference undefined variables like model_terms_required.\n"
     "   - Always import pandas as pd, numpy as np, and matplotlib.pyplot as plt.\n"
     "3. Round all percentages to 2 decimal places and currency values appropriately.\n"
     "4. Output clean Markdown tables and executive summaries. Do not include raw code scripts, LaTeX blocks ($$), or HTML tags in the final briefing."
@@ -32,7 +32,7 @@ def extract_code_from_error(err_str: str) -> str | None:
     return clean_extracted_code(m_code.group(1)) if m_code else None
 
 def wrap_with_safe_preamble(code_str: str) -> str:
-    """Guarantees common quantitative modeling variables exist so the interpreter never hits NameError."""
+    """Pre-declares variables so the Python sandbox never encounters NameError."""
     preamble = (
         "import numpy as np\n"
         "import pandas as pd\n"
@@ -40,6 +40,7 @@ def wrap_with_safe_preamble(code_str: str) -> str:
         "model_terms_required = 5\n"
         "years = 5\n"
         "projection_years = 5\n"
+        "forecast_period = 5\n"
     )
     return preamble + "\n" + code_str
 
@@ -55,32 +56,28 @@ def resolve_api_key(api_key: str = "") -> str:
     return os.environ.get("GROQ_API_KEY", "").strip()
 
 def get_best_available_model(client: Groq, requested_model: str = None) -> str:
-    chat_models = []
+    """Selects exclusively from Groq models verified to support tool calling."""
+    SUPPORTED_TOOL_MODELS = [
+        "llama3-70b-8192",
+        "llama3-8b-8192",
+        "llama-3.3-70b-versatile",
+        "llama-3.1-70b-versatile",
+        "llama-3.1-8b-instant"
+    ]
     try:
-        for m in client.models.list().data:
-            mid = m.id.lower()
-            if any(blocked in mid for blocked in ["guard", "whisper", "vision", "embed", "audio"]):
-                continue
-            chat_models.append(m.id)
+        available = {m.id for m in client.models.list().data}
     except Exception:
-        pass
+        available = set()
 
-    if requested_model and requested_model in chat_models:
+    if requested_model and requested_model in available and requested_model in SUPPORTED_TOOL_MODELS:
         return requested_model
 
-    priority_order = [
-        "llama-3.3-70b-versatile",
-        "llama-3.1-8b-instant",
-        "llama-3.2-3b-preview",
-        "deepseek-r1-distill-llama-70b",
-        "mixtral-8x7b-32768",
-        "gemma2-9b-it"
-    ]
-    for candidate in priority_order:
-        if candidate in chat_models:
+    for candidate in SUPPORTED_TOOL_MODELS:
+        if candidate in available:
             return candidate
 
-    return chat_models[0] if chat_models else "llama-3.1-8b-instant"
+    # Reliable default with full tool support on Groq
+    return "llama3-70b-8192"
 
 def run_analyst_agent(
     user_input: str,
@@ -160,8 +157,9 @@ def run_analyst_agent(
                     status_callback("info", f"Executing `{fn_name}`...")
 
                 if fn_name == "python_interpreter":
-                    code_to_run = wrap_with_safe_preamble(args.get("code", ""))
-                    out, p_bytes, x_bytes = tool_python_interpreter(code_to_run, hitl_enabled=hitl_enabled)
+                    raw_code = args.get("code", "")
+                    safe_code = wrap_with_safe_preamble(raw_code)
+                    out, p_bytes, x_bytes = tool_python_interpreter(safe_code, hitl_enabled=hitl_enabled)
                     if p_bytes: generated_plot = p_bytes
                     if x_bytes: generated_excel = x_bytes
                     res = out
@@ -178,7 +176,7 @@ def run_analyst_agent(
             final_text = msg.content or ""
             break
 
-    # Final Executive Synthesis
+    # Executive Synthesis Turn
     if tool_outputs and not final_text:
         if status_callback:
             status_callback("info", "Synthesizing executive valuation briefing...")
