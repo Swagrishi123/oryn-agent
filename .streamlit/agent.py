@@ -32,7 +32,7 @@ FINANCIAL_ACRONYMS_BLACKLIST = {
     "THEIR", "IN", "CLEAN", "TABLE", "WHAT", "WHO", "IS", "THE", "GIVE", "GET",
     "ME", "OF", "WITH", "THIS", "THAT", "FROM", "OUT", "RUN", "HOW", "ABOUT",
     "NOW", "ESTIMATE", "PRICE", "CAP", "RANGE", "RATIO", "STOCK", "SHARE",
-    "USD", "INR", "NSE", "BSE", "FOUNDER", "FOUNDERS", "OF"
+    "USD", "INR", "NSE", "BSE", "FOUNDER", "FOUNDERS", "OF", "TSM"
 }
 
 SYSTEM_PROMPT = (
@@ -57,15 +57,17 @@ SYSTEM_PROMPT = (
     "Every row must be separated by a standard newline.\n"
     "2. NO DOLLAR SIGNS IN TABLES: State currencies in column headers as 'USD M', 'INR', or 'bps'. "
     "Values inside cells must be plain numbers.\n\n"
-    "BANKING FIG, ALM & RESTRUCTURING LOGIC:\n"
-    "1. RATE SENSITIVITY MECHANICS:\n"
-    "   - Floating-rate loans (e.g., DIP facilities) reprice UPWARDS when policy rates rise, expanding asset yield.\n"
-    "   - When policy rates fall, floating assets reprice DOWNWARDS, compressing NIM.\n"
-    "   - DIP loan yield spreads reflect distressed credit and typically range from 300 to 650 bps over benchmark.\n"
-    "2. CHAPTER 11 WATERFALLS:\n"
-    "   - Priority order: DIP -> First Lien -> Second Lien -> Senior Unsecured -> Subordinated. "
-    "The fulcrum security is the tranche receiving partial recovery.\n"
-    "3. DCF MODELING: Execute quantitative schedules, render matplotlib artifacts, and generate 'model.xlsx'."
+    "CORPORATE VALUATION & BALANCE SHEET BRIDGE PROTOCOLS:\n"
+    "1. ENTERPRISE VALUE (EV) TO EQUITY VALUE BRIDGE:\n"
+    "   - Formula: Equity Value = Implied EV - Gross Debt + Unrestricted Cash - Non-Controlling/Minority Interest - Debt-like Obligations (Pension Deficits, Preferred Equity) + Non-Operating Assets (Equity Investments in Affiliates/Associates).\n"
+    "   - Net Debt = Gross Debt - Unrestricted Cash (exclude restricted cash).\n"
+    "   - When bridging FROM EV TO Equity Value, you MUST SUBTRACT Net Debt, SUBTRACT Minority Interest, and SUBTRACT Pension Deficits, and you MUST ADD Affiliates/Associates.\n"
+    "2. TREASURY STOCK METHOD (TSM):\n"
+    "   - Exercise proceeds = Options * Strike Price. Repurchased shares = Proceeds / Current Share Price.\n"
+    "   - Net new shares = Options - Repurchased shares. Fully Diluted Shares = Basic Shares + Net new shares.\n"
+    "3. CHAPTER 11 WATERFALLS:\n"
+    "   - Priority order: DIP -> First Lien -> Second Lien -> Senior Unsecured -> Subordinated. The fulcrum security is the tranche receiving partial recovery.\n"
+    "4. DCF MODELING: Execute quantitative schedules, render matplotlib artifacts, and generate 'model.xlsx'."
 )
 
 CACHED_WORKING_MODEL = None
@@ -164,7 +166,8 @@ def extract_and_fetch_live_data(prompt: str, status_callback=None) -> str:
             "dcf", "discounted cash flow", "wacc", "waterfall", "restructuring",
             "alm", "nim", "deposit beta", "rate cut", "rate hike", "bps",
             "afs", "tce", "tangible common equity", "asset-sensitive", "fulcrum",
-            "covenant", "debt capacity", "leverage", "coverage ratio"
+            "covenant", "debt capacity", "leverage", "coverage ratio", "accretion",
+            "dilution", "equity value bridge", "treasury stock method", "net debt"
         ]
         is_pure_theory = any(w in p_lower for w in theory_bypass_terms)
         
@@ -183,11 +186,9 @@ def extract_and_fetch_live_data(prompt: str, status_callback=None) -> str:
 
 def sanitize_report_formatting(text: str) -> str:
     """Repairs tables, guarantees newlines between table rows, and purges leaked tags."""
-    # 1. Purge ANY bracketed label prefix (e.g., [ORYN REPORT], [POLICY - SpaceX], etc.)
     cleaned = re.sub(r'\[[A-Za-z0-9\s\-_\.]+\]:?\s*', '', text)
     cleaned = re.sub(r'```(?:python)?\s*[\s\S]*?```', '', cleaned)
     
-    # 2. Strip prompt-echoing filler phrases
     filler_patterns = [
         r'(?i)^please provide the requested information[^\n]*\n?',
         r'(?i)based on the (?:available )?(?:information|data)[,\s]*',
@@ -197,7 +198,6 @@ def sanitize_report_formatting(text: str) -> str:
     for fp in filler_patterns:
         cleaned = re.sub(fp, '', cleaned)
 
-    # 3. Ensure table rows do not run together
     cleaned = re.sub(r'\|\s*\|', '|\n|', cleaned)
 
     lines = cleaned.split('\n')
@@ -211,7 +211,6 @@ def sanitize_report_formatting(text: str) -> str:
             header_cols = [c.strip() for c in tbl[0].strip('|').split('|')]
             divider = "| " + " | ".join([":---"] * len(header_cols)) + " |"
             tbl.insert(1, divider)
-        # Ensure distinct blank line boundaries around the Markdown table
         return [""] + tbl + [""]
 
     for line in lines:
