@@ -39,38 +39,41 @@ def resolve_api_key(api_key: str = "") -> str:
     return os.environ.get("GROQ_API_KEY", "").strip()
 
 def get_best_available_model(client: Groq, requested_model: str = None) -> str:
-    """Queries Groq to find the exact models available to this specific API key."""
-    available = []
+    """Finds valid general-purpose chat/code models on this Groq key, filtering out moderation/audio filters."""
+    chat_models = []
     try:
-        available = [m.id for m in client.models.list().data]
+        for m in client.models.list().data:
+            mid = m.id.lower()
+            # Strictly exclude moderation guards, audio, and vision embeddings
+            if any(blocked in mid for blocked in ["guard", "whisper", "vision", "embed", "audio"]):
+                continue
+            chat_models.append(m.id)
     except Exception:
         pass
 
-    # 1. Use requested model if it exists on Groq
-    if requested_model and requested_model in available:
+    # 1. Use requested model if valid and not a guard model
+    if requested_model and requested_model in chat_models:
         return requested_model
 
-    # 2. Match against prioritized list of production chat models
-    candidates = [
+    # 2. Prioritize high-performance text and tool-calling models
+    priority_order = [
         "llama-3.3-70b-versatile",
-        "llama-3.1-70b-versatile",
         "llama-3.1-8b-instant",
-        "llama3-70b-8192",
-        "llama3-8b-8192",
+        "llama-3.2-3b-preview",
+        "llama-3.2-1b-preview",
+        "deepseek-r1-distill-llama-70b",
         "mixtral-8x7b-32768",
         "gemma2-9b-it"
     ]
-    for cand in candidates:
-        if cand in available:
-            return cand
+    for candidate in priority_order:
+        if candidate in chat_models:
+            return candidate
 
-    # 3. Fallback: select any chat model that isn't whisper/audio
-    for m in available:
-        m_lower = m.lower()
-        if ("llama" in m_lower or "mixtral" in m_lower or "gemma" in m_lower) and "whisper" not in m_lower:
-            return m
+    # 3. Fallback to first available non-guard chat model
+    if chat_models:
+        return chat_models[0]
 
-    return requested_model or "llama3-8b-8192"
+    return "llama-3.1-8b-instant"
 
 def run_analyst_agent(
     user_input: str,
@@ -86,7 +89,7 @@ def run_analyst_agent(
     active_key = resolve_api_key(api_key)
     if not active_key:
         return (
-            "⚠️ **API Key Missing**: Please enter your free Groq API key in the sidebar.",
+            "⚠️ **API Key Missing**: Please enter your Groq API key in the sidebar.",
             None,
             None,
             0.0
@@ -99,7 +102,7 @@ def run_analyst_agent(
 
     active_model = get_best_available_model(client, selected_model)
     if status_callback:
-        status_callback("info", f"Connected to Groq (`{active_model}`)")
+        status_callback("info", f"Executing on engine: `{active_model}`")
 
     scratchpad = [
         {"role": "system", "content": SYSTEM_PROMPT},
@@ -118,7 +121,7 @@ def run_analyst_agent(
                 messages=scratchpad,
                 tools=AGENT_TOOLS,
                 tool_choice="auto",
-                max_tokens=2048
+                max_tokens=1500
             )
         except Exception as e:
             err = str(e)
@@ -166,22 +169,21 @@ def run_analyst_agent(
             final_text = msg.content or ""
             break
 
-    # Synthesis Turn
+    # Executive Synthesis Turn
     if tool_outputs and not final_text:
         if status_callback:
-            status_callback("info", "Generating executive valuation briefing...")
+            status_callback("info", "Synthesizing executive valuation briefing...")
         try:
             synth = client.chat.completions.create(
                 model=active_model,
                 messages=[
                     {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": f"Query: {user_input}\n\nTool Results:\n" + "\n\n".join(tool_outputs) + "\n\nFormat these quantitative valuation results into a clean executive Markdown briefing."}
+                    {"role": "user", "content": f"Query: {user_input}\n\nTool Results:\n" + "\n\n".join(tool_outputs) + "\n\nProvide the final executive valuation briefing in clean Markdown tables."}
                 ],
-                max_tokens=2048
+                max_tokens=1500
             )
             final_text = synth.choices[0].message.content or "Analysis complete."
         except Exception:
-            # Fallback directly to computed outputs if synthesis encounters an API issue
             formatted_outputs = "\n\n".join(tool_outputs)
             final_text = f"### 📊 Valuation Analysis Completed\n\n{formatted_outputs}"
 
