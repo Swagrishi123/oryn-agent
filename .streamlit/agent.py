@@ -261,4 +261,72 @@ def run_analyst_agent(
         if status_callback:
             status_callback("info", "Executing quantitative DCF model and Excel builder...")
         briefing_text, plot_bytes, excel_bytes = generate_deterministic_dcf_artifacts(user_input)
-        return sanitize_report_formatting(briefing_text), plot_bytes, excel_bytes, time.perf_
+        return sanitize_report_formatting(briefing_text), plot_bytes, excel_bytes, time.perf_counter() - start_time
+
+    # 2. Branch: Institutional Advisory & Live Market Data Tool Loop
+    try:
+        messages = build_contextual_messages(user_input, SYSTEM_PROMPT, max_turns=3)
+        
+        first_resp = create_completion_with_fallback(
+            client=client,
+            preferred_model=selected_model,
+            status_callback=status_callback,
+            messages=messages,
+            tools=AGENT_TOOLS,
+            tool_choice="auto",
+            max_tokens=1200
+        )
+        msg = first_resp.choices[0].message
+
+        # Handle tool invocation if live market data is requested
+        if getattr(msg, "tool_calls", None):
+            cleaned_tool_calls = []
+            for tc in msg.tool_calls:
+                cleaned_tool_calls.append({
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {
+                        "name": tc.function.name,
+                        "arguments": tc.function.arguments
+                    }
+                })
+
+            assistant_msg_dict = {
+                "role": "assistant",
+                "content": msg.content or "",
+                "tool_calls": cleaned_tool_calls
+            }
+            messages.append(assistant_msg_dict)
+
+            for tool_call in msg.tool_calls:
+                fn_name = tool_call.function.name
+                args = json.loads(tool_call.function.arguments or "{}")
+                
+                if fn_name == "get_financial_data":
+                    ticker = args.get("ticker", "")
+                    if status_callback:
+                        status_callback("info", f"Retrieving live market metrics for {ticker} from NSE/BSE...")
+                    live_result = tool_get_financial_data(ticker)
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "name": fn_name,
+                        "content": json.dumps(live_result)
+                    })
+
+            second_resp = create_completion_with_fallback(
+                client=client,
+                preferred_model=selected_model,
+                status_callback=status_callback,
+                messages=messages,
+                max_tokens=1200
+            )
+            final_text = second_resp.choices[0].message.content or ""
+        else:
+            final_text = msg.content or ""
+
+        elapsed = time.perf_counter() - start_time
+        return sanitize_report_formatting(final_text), None, None, elapsed
+
+    except Exception as e:
+        return f"Error: {e}", None, None, time.perf_counter() - start_time
