@@ -16,7 +16,10 @@ SYSTEM_PROMPT = (
     "1. DIRECT STRUCTURAL DELIVERY: Eliminate all introductory greetings, pleasantries, and meta-commentary. "
     "Begin immediately with the report title.\n"
     "2. STRICT MARKDOWN TABLE SYNTAX: Every table row MUST be separated by an actual newline (\\n) and start/end with a pipe (|). "
-    "Never concatenate table rows into run-on paragraphs. Use standard headers and divider rows (| :--- | :--- |).\n"
+    "Never concatenate table rows into run-on paragraphs. Follow this exact Markdown table structure:\n"
+    "| Col 1 | Col 2 |\n"
+    "| :--- | :--- |\n"
+    "| Val 1 | Val 2 |\n"
     "3. INSTITUTIONAL FIG & BANKING REASONING:\n"
     "   - Asset-Sensitive Banks: In a RATE-CUT environment, loan yields reprice downward faster than deposit costs can be cut. "
     "Therefore, Net Interest Margin (NIM) strictly COMPRESSES (Asset Yield Delta - Liability Cost Delta is negative).\n"
@@ -24,11 +27,17 @@ SYSTEM_PROMPT = (
     "     * Low Deposit Beta (e.g., 30%): Deposit costs are sticky downward (-30 bps relief), causing SEVERE NIM COMPRESSION (-45 bps).\n"
     "     * High Deposit Beta (e.g., 60%): Deposit costs drop aggressively (-60 bps relief), CUSHIONING margins and limiting NIM compression (-15 bps).\n"
     "   - NII Impact: Asset Yield Drag minus Liability Cost Relief multiplied by Earning Assets. Never report positive NIM expansion for a rate cut on an asset-sensitive bank.\n"
+    "   - Secondary Rate Cut Effects: Declining yields cause bond prices to RISE (reversing AFS paper losses and boosting TCE). NIB deposit opportunity cost FALLS (slowing deposit flight to money markets).\n"
     "4. M&A ACCRETION REASONING:\n"
-    "   - Stock deals depend on relative P/E arbitrage.\n"
+    "   - Stock deals depend on relative P/E arbitrage (Buyer P/E > Target P/E is accretive).\n"
     "   - Debt/cash deals depend strictly on Target Earnings Yield (1 / Target Purchase P/E) vs. After-Tax Cost of Debt [Rate * (1 - Tax)].\n"
-    "5. FACTUAL INTEGRITY & MULTI-TURN CONTEXT: Maintain conversational memory across turns. Never fabricate executive biographies, regulatory appointments, or fake personas.\n"
-    "6. DCF MODELING: For DCF requests, execute quantitative schedules, render a matplotlib chart, and write 'model.xlsx'."
+    "   - Equity dilution = Deal Consideration / Buyer Market Cap.\n"
+    "5. LEVERAGED FINANCE (LEVFIN) RULES:\n"
+    "   - Pricing Hierarchy: Subordinated/unsecured debt MUST price HIGHER than senior secured debt (credit risk spread). If TLB is 8.0%, Notes must clear at 8.75%-9.5%.\n"
+    "   - Sources & Uses Footing: Percentages MUST divide by Total Sources/Uses and sum to exactly 100.0%.\n"
+    "   - High Density Delivery: Keep explanations to 1 concise sentence each so all sections complete before token limits.\n"
+    "6. FACTUAL INTEGRITY & MULTI-TURN CONTEXT: Maintain conversational memory across turns. Never fabricate executive biographies, regulatory appointments, or fake personas.\n"
+    "7. DCF MODELING: For DCF requests, execute quantitative schedules, render a matplotlib chart, and write 'model.xlsx'."
 )
 
 CACHED_WORKING_MODEL = None
@@ -40,7 +49,7 @@ def is_quantitative_model_request(prompt: str) -> bool:
     
     dcf_terms = [
         "dcf", "discounted cash flow", "sensitivity matrix", 
-        "unlevered", "lbo model", "run a financial model", 
+        "unlevered", "run a financial model", 
         "build a financial model", "run a 5-year", "run a 10-year",
         "export the financial model to excel"
     ]
@@ -160,7 +169,6 @@ def create_completion_with_fallback(client: Groq, preferred_model: str = None, s
     else:
         active_model = get_best_available_model(client)
         
-    # Set to 850 (maximum allowable output budget on Groq's 1000 OTPM ceiling)
     if "max_tokens" in kwargs:
         kwargs["max_tokens"] = min(kwargs["max_tokens"], 850)
     else:
@@ -186,7 +194,6 @@ def create_completion_with_fallback(client: Groq, preferred_model: str = None, s
             
             time.sleep(sleep_sec)
             
-            # Failover to secondary model with independent quota
             alt_model = get_best_available_model(client, exclude_model=active_model, force_refresh=True)
             kwargs["model"] = alt_model
             kwargs["max_tokens"] = 600
@@ -405,7 +412,7 @@ def run_analyst_agent(
 
     is_dcf_calc = is_quantitative_model_request(user_input)
 
-    # Branch 1: M&A Advisory, FIG Equity Research, Macro & Industry Memos
+    # Branch 1: M&A Advisory, FIG Equity Research, LevFin, Restructuring Memos
     if not is_dcf_calc:
         try:
             messages = build_contextual_messages(user_input, SYSTEM_PROMPT, max_turns=3)
