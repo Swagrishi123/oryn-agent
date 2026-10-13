@@ -14,7 +14,7 @@ SYSTEM_PROMPT = (
     "You are ORYN Analyst, an institutional BFSI quantitative analyst.\n"
     "CORE RULES:\n"
     "1. Respond naturally in the language used by the user.\n"
-    "2. For general or conversational questions (e.g., 'Who is Abraham Lincoln?', 'What is the capital of China?'), "
+    "2. For general or conversational questions (e.g., 'Who is Abraham Lincoln?', 'Who is the founder of Meta?'), "
     "answer directly and concisely. Do NOT invoke valuation models or tools.\n"
     "3. For valuation and DCF requests, ALWAYS execute python_interpreter to calculate cash flows, "
     "create a matplotlib chart, and write 'model.xlsx'.\n"
@@ -46,7 +46,6 @@ def sanitize_report_formatting(text: str) -> str:
     cleaned = cleaned.replace("`**", "**").replace("**`", "**")
     cleaned = re.sub(r'`([^`\n]+)`', r'\1', cleaned)
     cleaned = cleaned.replace('`', '')
-    # Escape unescaped dollar signs so Streamlit does not interpret them as LaTeX math
     cleaned = re.sub(r'(?<!\\)\$', r'\$', cleaned)
     return re.sub(r'\n{3,}', '\n\n', cleaned).strip()
 
@@ -77,7 +76,7 @@ def resolve_api_key(api_key: str = "") -> str:
     return os.environ.get("GROQ_API_KEY", "").strip()
 
 def get_best_available_model(client: Groq, force_refresh: bool = False) -> str:
-    """Discovers accessible models dynamically by testing live access to avoid 404 errors."""
+    """Discovers an accessible model on the user's Groq key by ping-testing each candidate."""
     global CACHED_WORKING_MODEL
     if CACHED_WORKING_MODEL and not force_refresh:
         return CACHED_WORKING_MODEL
@@ -94,21 +93,20 @@ def get_best_available_model(client: Groq, force_refresh: bool = False) -> str:
         if "/" not in mid and not any(b in mid.lower() for b in blacklist)
     ]
 
-    preferred = [
-        "llama-3.3-70b-versatile",
-        "llama3-70b-8192",
+    # Universal production models available on all standard accounts
+    priority = [
         "llama3-8b-8192",
+        "llama3-70b-8192",
         "mixtral-8x7b-32768",
         "gemma2-9b-it",
+        "llama-3.3-70b-versatile",
         "llama-3.2-3b-preview",
-        "llama-3.2-1b-preview",
-        "deepseek-r1-distill-llama-70b",
-        "qwen-2.5-32b"
+        "llama-3.2-1b-preview"
     ]
 
-    test_queue = [m for m in preferred if m in candidates] + [m for m in candidates if m not in preferred]
+    test_queue = [m for m in priority if m in candidates] + [m for m in candidates if m not in priority]
     if not test_queue:
-        test_queue = preferred
+        test_queue = priority
 
     for model_name in test_queue:
         try:
@@ -122,11 +120,11 @@ def get_best_available_model(client: Groq, force_refresh: bool = False) -> str:
         except Exception:
             continue
 
-    CACHED_WORKING_MODEL = test_queue[0] if test_queue else "llama3-8b-8192"
+    CACHED_WORKING_MODEL = "llama3-8b-8192"
     return CACHED_WORKING_MODEL
 
 def create_completion_with_fallback(client: Groq, status_callback=None, **kwargs):
-    """Executes Groq completions with automatic model failover if 404 or access error occurs."""
+    """Executes Groq completions with automatic model failover if a 404/model_not_found occurs."""
     global CACHED_WORKING_MODEL
     active_model = get_best_available_model(client)
     kwargs["model"] = active_model
@@ -137,7 +135,7 @@ def create_completion_with_fallback(client: Groq, status_callback=None, **kwargs
         err_str = str(e).lower()
         if "404" in err_str or "model_not_found" in err_str or "access" in err_str:
             if status_callback:
-                status_callback("info", f"Model `{active_model}` not accessible. Auto-switching to alternate model...")
+                status_callback("info", f"Model `{active_model}` not accessible. Auto-switching to working model...")
             active_model = get_best_available_model(client, force_refresh=True)
             kwargs["model"] = active_model
             return client.chat.completions.create(**kwargs)
@@ -322,7 +320,7 @@ def run_analyst_agent(
 
     is_valuation_query = any(k in user_input.lower() for k in VALUATION_KEYWORDS)
 
-    # 1. Direct answering for non-valuation queries (e.g., "Who is Abraham Lincoln?")
+    # 1. Direct answering for non-valuation queries (e.g., "Who is the founder of Meta?")
     if not is_valuation_query:
         try:
             resp = create_completion_with_fallback(
