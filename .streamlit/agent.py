@@ -103,7 +103,6 @@ def extract_and_fetch_live_data(prompt: str, status_callback=None) -> str:
         if dt_clean not in FINANCIAL_ACRONYMS_BLACKLIST:
             found_tickers.add(dt_clean)
 
-    # Search for capital tickers only if prompt requests equity metrics
     is_stock_request = any(k in p_lower for k in ["stock", "share", "price", "market cap", "52-week", "quote", "ticker"])
     if is_stock_request:
         raw_candidates = re.findall(r'\b[A-Z]{2,10}\b', prompt)
@@ -310,7 +309,59 @@ def build_contextual_messages(user_input: str, system_prompt: str, max_turns: in
         pass
     return [{"role": "system", "content": system_prompt}] + history + [{"role": "user", "content": user_input}]
 
-def parse_dcf_assumptions
+def parse_dcf_assumptions(prompt: str) -> dict:
+    """Parses dynamic DCF parameters from conversational input with fallback defaults."""
+    p_lower = prompt.lower()
+    
+    # 1. Growth rate (default 20%)
+    growth_match = re.search(r'(?:growing|growth rate|revenue growth|growth)[\s:]*(?:at\s*)?([0-9.]+)%', p_lower)
+    growth = float(growth_match.group(1)) / 100.0 if growth_match else 0.20
+
+    # 2. Revenue Parsing
+    y1_num = None
+    m1 = re.search(r'([0-9.]+)\s*(?:m|million)?\s*(?:revenue\s+)?in\s+year[\s-]*1', p_lower)
+    m2 = re.search(r'rev(?:enue)?[\s:]*(?:usd|\$)?\s*([0-9.]+)\s*(?:m|million)?\s+in\s+year[\s-]*1', p_lower)
+    m3 = re.search(r'year[\s-]*1\s*rev(?:enue)?[\s:]*(?:usd|\$)?\s*([0-9.]+)', p_lower)
+
+    if m1:
+        y1_num = float(m1.group(1))
+    elif m2:
+        y1_num = float(m2.group(1))
+    elif m3:
+        y1_num = float(m3.group(1))
+
+    if y1_num is not None:
+        base_revenue = y1_num / (1.0 + growth) if growth > -0.99 else y1_num
+    else:
+        m_gen = re.search(r'(?:revenue|rev)[\s:]*(?:usd|\$)?\s*([0-9.]+)', p_lower)
+        if m_gen:
+            val = float(m_gen.group(1))
+            if "start" in p_lower or "base" in p_lower:
+                base_revenue = val
+            else:
+                base_revenue = val / (1.0 + growth)
+        else:
+            base_revenue = 50.0
+
+    # 3. EBITDA Margin
+    margin_match = re.search(r'(?:ebitda margin|margin|ebitda)[\s:]*(?:apparently\s*)?([0-9.]+)%', p_lower)
+    margin = float(margin_match.group(1)) / 100.0 if margin_match else 0.25
+
+    # 4. WACC / Discount Rate
+    wacc_match = re.search(r'(?:wacc|discount rate|cost of capital)[\s:]*(?:apparently\s*)?([0-9.]+)%', p_lower)
+    wacc = float(wacc_match.group(1)) / 100.0 if wacc_match else 0.10
+
+    # 5. Terminal Growth Rate
+    tv_match = re.search(r'(?:terminal growth|terminal rate|perpetual growth)[\s:]*(?:apparently\s*)?([0-9.]+)%', p_lower)
+    tv_rate = float(tv_match.group(1)) / 100.0 if tv_match else 0.025
+
+    return {
+        "base_revenue": base_revenue,
+        "growth": growth,
+        "margin": margin,
+        "wacc": wacc,
+        "tv_rate": tv_rate
+    }
 
 def generate_deterministic_dcf_artifacts(user_input: str) -> tuple[str, bytes | None, bytes | None]:
     params = parse_dcf_assumptions(user_input)
