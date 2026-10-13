@@ -339,7 +339,7 @@ def run_analyst_agent(
                     {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user", "content": user_input}
                 ],
-                max_tokens=1000
+                max_tokens=4000
             )
             elapsed = time.perf_counter() - start_time
             return sanitize_report_formatting(resp.choices[0].message.content or ""), None, None, elapsed
