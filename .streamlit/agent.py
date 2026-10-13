@@ -117,7 +117,7 @@ def extract_and_fetch_live_data(prompt: str, status_callback=None) -> str:
         market_rows = []
         for ticker in target_tickers:
             if status_callback:
-                status_callback("info", f"Retrieving verified market metrics for {ticker}...")
+                status_callback("info", f"Retrieving market data for {ticker}...")
             try:
                 data = tool_get_financial_data(ticker)
                 price = data.get("current_price", "N/A")
@@ -150,7 +150,7 @@ def extract_and_fetch_live_data(prompt: str, status_callback=None) -> str:
         # Avoid running search for pure quantitative modeling or restructuring prompts
         if not any(w in p_lower for w in ["dcf", "discounted cash flow", "wacc", "waterfall", "restructuring", "ebitda margin"]):
             if status_callback:
-                status_callback("info", "Autonomous research: retrieving verified records...")
+                status_callback("info", "Researching available sources...")
             scraped_intel = dynamic_web_search(prompt)
             if scraped_intel:
                 injected_context.append(
