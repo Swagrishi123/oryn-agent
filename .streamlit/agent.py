@@ -14,7 +14,7 @@ SYSTEM_PROMPT = (
     "You are ORYN Analyst, an institutional BFSI quantitative analyst.\n"
     "CORE RULES:\n"
     "1. Respond naturally in the language used by the user.\n"
-    "2. For general or conversational questions (e.g., 'What is the capital of China?'), "
+    "2. For general or conversational questions (e.g., 'Who is Mark Zuckerberg?', 'What is the capital of China?'), "
     "answer directly and concisely. Do NOT invoke valuation models or tools.\n"
     "3. For valuation and DCF requests, ALWAYS execute python_interpreter to calculate cash flows, "
     "create a matplotlib chart, and write 'model.xlsx'.\n"
@@ -75,6 +75,7 @@ def resolve_api_key(api_key: str = "") -> str:
     return os.environ.get("GROQ_API_KEY", "").strip()
 
 def get_best_available_model(client: Groq) -> str:
+    """Dynamically detects active models on the Groq account without hardcoding broken fallbacks."""
     global CACHED_WORKING_MODEL
     if CACHED_WORKING_MODEL:
         return CACHED_WORKING_MODEL
@@ -89,31 +90,27 @@ def get_best_available_model(client: Groq) -> str:
         if "/" not in mid and not any(b in mid.lower() for b in ["guard", "whisper", "vision", "embed", "audio", "orpheus", "allam", "arabic"])
     ]
 
+    # Groq active production models in priority order
     priority = [
         "llama-3.3-70b-versatile",
-        "llama-3.1-70b-versatile",
         "llama3-70b-8192",
-        "llama-3.1-8b-instant",
-        "llama-3.2-3b-preview",
-        "deepseek-r1-distill-llama-70b",
-        "mixtral-8x7b-32768"
+        "llama3-8b-8192",
+        "mixtral-8x7b-32768",
+        "gemma2-9b-it",
+        "deepseek-r1-distill-llama-70b"
     ]
 
-    ordered = [p for p in priority if p in valid_candidates] + [c for c in valid_candidates if c not in priority]
+    for model_name in priority:
+        if model_name in valid_candidates:
+            CACHED_WORKING_MODEL = model_name
+            return model_name
 
-    for cand in ordered:
-        try:
-            client.chat.completions.create(
-                model=cand,
-                messages=[{"role": "user", "content": "ping"}],
-                max_tokens=1
-            )
-            CACHED_WORKING_MODEL = cand
-            return cand
-        except Exception:
-            continue
+    if valid_candidates:
+        CACHED_WORKING_MODEL = valid_candidates[0]
+        return CACHED_WORKING_MODEL
 
-    CACHED_WORKING_MODEL = "llama-3.1-8b-instant"
+    # Default to Groq's primary flagship model
+    CACHED_WORKING_MODEL = "llama-3.3-70b-versatile"
     return CACHED_WORKING_MODEL
 
 def parse_prompt_financial_parameters(prompt: str) -> tuple[float, float, float, float, float, int]:
@@ -139,9 +136,9 @@ def parse_prompt_financial_parameters(prompt: str) -> tuple[float, float, float,
     return base_rev, growth, margin, wacc, tg, 5
 
 def df_to_markdown_table(df: pd.DataFrame, include_index: bool = False) -> str:
-    """Pure Python table formatter that guarantees clean Markdown without external dependencies."""
+    """Generates standard Markdown tables with proper spacing for Streamlit rendering."""
     if include_index:
-        headers = [""] + [str(col) for col in df.columns]
+        headers = ["Parameter"] + [str(col) for col in df.columns]
         rows = [[str(idx)] + [str(val) for val in row] for idx, row in zip(df.index, df.values)]
     else:
         headers = [str(col) for col in df.columns]
@@ -150,7 +147,7 @@ def df_to_markdown_table(df: pd.DataFrame, include_index: bool = False) -> str:
     header_line = "| " + " | ".join(headers) + " |"
     sep_line = "| " + " | ".join(["---"] * len(headers)) + " |"
     row_lines = ["| " + " | ".join(r) + " |" for r in rows]
-    return "\n".join([header_line, sep_line] + row_lines)
+    return "\n" + "\n".join([header_line, sep_line] + row_lines) + "\n"
 
 def generate_deterministic_dcf_artifacts(user_input: str) -> tuple[str, bytes, bytes]:
     base_rev, growth, margin, wacc, tg, years = parse_prompt_financial_parameters(user_input)
@@ -177,18 +174,18 @@ def generate_deterministic_dcf_artifacts(user_input: str) -> tuple[str, bytes, b
         for g in tg_range:
             cur_tv = (ufcf[-1] * (1 + g)) / (w - g)
             cur_pv_tv = cur_tv / ((1 + w) ** years)
-            col.append(f"{pv_cf + cur_pv_tv:.2f}")
+            col.append(f"${pv_cf + cur_pv_tv:.2f}M")
         sens_data[f"WACC {w*100:.1f}%"] = col
 
     df_sens = pd.DataFrame(sens_data, index=[f"TG {g*100:.1f}%" for g in tg_range])
 
     df_proj = pd.DataFrame({
         "Year": [str(y) for y in years_idx],
-        "Revenue ($M)": [f"{x:.2f}" for x in rev],
-        "EBITDA ($M)": [f"{x:.2f}" for x in ebitda],
-        "UFCF ($M)": [f"{x:.2f}" for x in ufcf],
+        "Revenue ($M)": [f"${x:.2f}M" for x in rev],
+        "EBITDA ($M)": [f"${x:.2f}M" for x in ebitda],
+        "UFCF ($M)": [f"${x:.2f}M" for x in ufcf],
         "Discount Factor": [f"{x:.4f}" for x in df],
-        "PV of UFCF ($M)": [f"{x:.2f}" for x in pv_ufcf]
+        "PV of UFCF ($M)": [f"${x:.2f}M" for x in pv_ufcf]
     })
 
     # Render Visual Chart Artifact
@@ -245,9 +242,10 @@ def generate_deterministic_dcf_artifacts(user_input: str) -> tuple[str, bytes, b
 
     calc_briefing = f"""### 📊 Executive Valuation Briefing
 
-An unlevered Discounted Cash Flow (DCF) model was performed over a **{years}-year forecast horizon** applying a **{wacc*100:.1f}% WACC** discount rate and a **{tg*100:.2f}% perpetual growth rate**.
+An unlevered Discounted Cash Flow (DCF) model was conducted over a **{years}-year discrete forecast horizon** applying a **{wacc*100:.1f}% WACC** discount rate and a **{tg*100:.2f}% perpetual growth rate**.
 
 **Core Valuation Metrics:**
+
 {summary_table_md}
 
 ---
@@ -256,7 +254,7 @@ An unlevered Discounted Cash Flow (DCF) model was performed over a **{years}-yea
 
 {proj_table_md}
 
-* **Forecast Cash Flow Expansion:** UFCF expands from **${float(df_proj.iloc[0]['UFCF ($M)']):.2f}M** (Year 1) to **${float(df_proj.iloc[-1]['UFCF ($M)']):.2f}M** (Year 5).
+* **Forecast Cash Flow Expansion:** UFCF expands from **${ufcf[0]:.2f}M** (Year 1) to **${ufcf[-1]:.2f}M** (Year 5).
 * **Discounted Explicit Value:** The 5-year discrete forecast contributes **${sum_pv_ufcf:.2f}M** ({(sum_pv_ufcf/ev)*100:.1f}% of Enterprise Value).
 
 ---
@@ -301,7 +299,7 @@ def run_analyst_agent(
 
     is_valuation_query = any(k in user_input.lower() for k in VALUATION_KEYWORDS)
 
-    # 1. Direct answering for non-valuation queries (e.g., "Who is the father of India?")
+    # 1. Direct answering for non-valuation queries (e.g., "Who is Mark Zuckerberg?")
     if not is_valuation_query:
         try:
             resp = client.chat.completions.create(
