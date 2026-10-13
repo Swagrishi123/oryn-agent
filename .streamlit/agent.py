@@ -310,45 +310,7 @@ def build_contextual_messages(user_input: str, system_prompt: str, max_turns: in
         pass
     return [{"role": "system", "content": system_prompt}] + history + [{"role": "user", "content": user_input}]
 
-def parse_dcf_assumptions(prompt: str) -> dict:
-    """Parses dynamic DCF parameters from conversational input with fallback defaults."""
-    p_lower = prompt.lower()
-    
-    # 1. Growth rate
-    growth_match = re.search(r'(?:growing|growth rate|revenue growth|growth)[\s:]*(?:at\s*)?([0-9.]+)%', p_lower)
-    growth = float(growth_match.group(1)) / 100.0 if growth_match else 0.20
-
-    # 2. Starting Revenue / Year-1 Revenue
-    y1_match = re.search(r'(?:year[\s-]*1\s*revenue|revenue\s*in\s*year[\s-]*1)[\s:]*(?:usd|\$)?\s*([0-9.]+)\s*(m|million)?', p_lower)
-    rev_match = re.search(r'(?:revenue|rev)[\s:]*(?:of\s*)?(?:usd|\$)?\s*([0-9.]+)\s*(m|million)?', p_lower)
-    
-    if y1_match:
-        y1_val = float(y1_match.group(1))
-        base_revenue = y1_val / (1.0 + growth) if growth > -0.99 else y1_val
-    elif rev_match:
-        base_revenue = float(rev_match.group(1))
-    else:
-        base_revenue = 50.0
-
-    # 3. EBITDA Margin
-    margin_match = re.search(r'(?:ebitda margin|margin|ebitda)[\s:]*(?:apparently\s*)?([0-9.]+)%', p_lower)
-    margin = float(margin_match.group(1)) / 100.0 if margin_match else 0.25
-
-    # 4. WACC / Discount Rate
-    wacc_match = re.search(r'(?:wacc|discount rate|cost of capital)[\s:]*(?:apparently\s*)?([0-9.]+)%', p_lower)
-    wacc = float(wacc_match.group(1)) / 100.0 if wacc_match else 0.10
-
-    # 5. Terminal Growth Rate
-    tv_match = re.search(r'(?:terminal growth|terminal rate|perpetual growth)[\s:]*(?:apparently\s*)?([0-9.]+)%', p_lower)
-    tv_rate = float(tv_match.group(1)) / 100.0 if tv_match else 0.025
-
-    return {
-        "base_revenue": base_revenue,
-        "growth": growth,
-        "margin": margin,
-        "wacc": wacc,
-        "tv_rate": tv_rate
-    }
+def parse_dcf_assumptions
 
 def generate_deterministic_dcf_artifacts(user_input: str) -> tuple[str, bytes | None, bytes | None]:
     params = parse_dcf_assumptions(user_input)
