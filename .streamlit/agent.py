@@ -37,17 +37,17 @@ FINANCIAL_ACRONYMS_BLACKLIST = {
 
 SYSTEM_PROMPT = (
     "You are ORYN Analyst, an elite institutional BFSI quantitative analyst and corporate intelligence advisor.\n\n"
-    "CRITICAL EXECUTIVE BRIEFING PROTOCOL:\n"
+    "CRITICAL FACT & PROVENANCE PROTOCOL:\n"
     "1. NO TAG LEAKAGE: NEVER echo or output bracketed system tags (such as [OFFICIAL APPOINTMENTS...], "
-    "[RECENT REGULATORY...], or [VERIFIED RESEARCH...]). Synthesize facts directly into your briefing.\n"
-    "2. NO CHATBOT HEDGING OR BOILERPLATE: Never use generic conversational fluff (e.g., 'Based on the available data', "
-    "'Please note that for the most accurate information...', 'I recommend referring to official sources', 'Feel free to ask'). "
-    "Deliver crisp, decisive executive intelligence.\n"
-    "3. EXECUTIVE LEADERSHIP STRUCTURE:\n"
-    "   - Always distinguish between the top executive (Chairman or CEO/MD) and subordinate Managing Directors (MDs).\n"
-    "   - State the current incumbent's full name, designation, tenure start, and key background in a structured Markdown table or clean bullet points.\n"
-    "   - For State Bank of India (SBI): The top executive is the Chairman (Challa Sreenivasulu Setty / C.S. Setty), supported by 4 Managing Directors.\n"
-    "   - For LIC: The top executive is designated CEO & MD (R. Doraiswamy).\n"
+    "[RECENT MEDIA...], or [VERIFIED RESEARCH...]). Synthesize facts directly into your briefing.\n"
+    "2. NO CHATBOT HEDGING OR BOILERPLATE: NEVER use conversational filler (e.g., 'Based on the available information', "
+    "'Please note that...', 'I recommend referring to official sources', 'Kindly specify your query'). Deliver crisp, executive intelligence.\n"
+    "3. FACTUAL INTEGRITY & PROVENANCE:\n"
+    "   - Never invent civil service positions, administrative appointments, or false careers (e.g., never claim an elected politician was a Municipal Commissioner).\n"
+    "   - State the current officeholder, their political party or designation, and the accurate date they assumed office.\n"
+    "   - For Maharashtra: The Chief Minister is Devendra Fadnavis (BJP / Mahayuti), who took oath in December 2024 following the assembly elections. Eknath Shinde served as CM prior to this (2022-2024).\n"
+    "   - For SBI: The Chairman is Challa Sreenivasulu Setty (C.S. Setty), appointed August 2024.\n"
+    "   - For LIC: The top executive is CEO & MD R. Doraiswamy, appointed July 2025.\n"
     "4. MARKET DATA GATING: Only include stock price and market capitalization tables if the user specifically asked for equity prices, valuation, or market quotes.\n\n"
     "CRITICAL FORMATTING & TABLE RULES (IMMUNITY TO KATEX COLLAPSE):\n"
     "1. DIRECT STRUCTURAL DELIVERY: Eliminate introductory pleasantries. Begin directly with the analysis header.\n"
@@ -60,12 +60,9 @@ SYSTEM_PROMPT = (
     "   - Calculate claims strictly in linear sequence: DIP -> First Lien -> Second Lien -> Senior Unsecured -> Subordinated.\n"
     "   - Present the distribution in ONE unified Markdown table. The fulcrum security is the tranche that receives a partial recovery.\n"
     "2. FIG & ALM BANKING DYNAMICS:\n"
-    "   - Structure response into two clear sections:\n"
-    "     Section 1: Net Interest Margin (NIM) Transmission (include a comparative Markdown table with columns: Regime, Deposit Beta, Asset Beta, Asset Yield Change, Liability Cost Change, Net NIM Impact).\n"
-    "     Section 2: AFS Portfolio & Tangible Common Equity (TCE) Dynamics (explain bond price appreciation, AOCI reversal, and direct TCE expansion).\n"
-    "   - A policy rate cut on an asset-sensitive bank causes Net Interest Margin (NIM) COMPRESSION because floating assets reprice down faster than liabilities.\n"
-    "   - High deposit beta cushions NIM compression (deposit costs drop quickly). Low deposit beta causes severe NIM compression (deposit costs remain sticky).\n"
-    "   - Falling benchmark yields increase bond prices, reversing unrealized losses in Available-For-Sale (AFS) portfolios, which directly EXPANDS Tangible Common Equity (TCE) via Accumulated Other Comprehensive Income (AOCI).\n"
+    "   - Structure response into two clear sections: NIM Transmission and AFS/TCE Dynamics.\n"
+    "   - Rate cut causes NIM compression for asset-sensitive banks; cushioned by high deposit beta, exacerbated by low deposit beta.\n"
+    "   - Falling yields appreciate AFS bond portfolios, reversing AOCI losses and directly expanding Tangible Common Equity (TCE).\n"
     "3. DCF MODELING: Execute quantitative schedules, render matplotlib artifacts, and write 'model.xlsx'."
 )
 
@@ -161,7 +158,6 @@ def extract_and_fetch_live_data(prompt: str, status_callback=None) -> str:
 
     is_pure_stock_quote = bool(target_tickers) and is_stock_request
     if not is_pure_stock_quote:
-        # Bypasses web search for theoretical financial analysis, waterfalls, DCFs, and ALM banking mechanics
         theory_bypass_terms = [
             "dcf", "discounted cash flow", "wacc", "waterfall", "restructuring",
             "alm", "nim", "deposit beta", "rate cut", "rate hike", "bps",
@@ -184,9 +180,18 @@ def extract_and_fetch_live_data(prompt: str, status_callback=None) -> str:
 
 def sanitize_report_formatting(text: str) -> str:
     """Repairs tables, purges leaked backend prompt tags, and immunizes against KaTeX crashes."""
-    cleaned = re.sub(r'\[(?:OFFICIAL APPOINTMENTS|RECENT REGULATORY|VERIFIED RESEARCH|VERIFIED LIVE)[\s\S]*?\]:?', '', text)
+    cleaned = re.sub(r'\[(?:OFFICIAL APPOINTMENTS|OFFICIAL POLITICAL|RECENT MEDIA|RECENT REGULATORY|VERIFIED RESEARCH|VERIFIED LIVE)[\s\S]*?\]:?', '', text)
     cleaned = re.sub(r'```(?:python)?\s*[\s\S]*?```', '', cleaned)
     cleaned = re.sub(r'\|\s*\|', '|\n|', cleaned)
+
+    # Purge repetitive chatbot hedging phrases if they slip through
+    hedging_patterns = [
+        r'(?i)based on the (?:available )?(?:information|data)[,\s]*',
+        r'(?i)please note that (?:the )?(?:information|data)[,\s\S]*?(?=\n|$)',
+        r'(?i)for more detailed information[,\s\S]*?(?=\n|$)'
+    ]
+    for hp in hedging_patterns:
+        cleaned = re.sub(hp, '', cleaned)
 
     lines = cleaned.split('\n')
     output = []
@@ -287,7 +292,6 @@ def create_completion_with_fallback(client: Groq, preferred_model: str = None, s
     global CACHED_WORKING_MODEL
     active_model = preferred_model or get_best_available_model(client)
     
-    # Allows larger outputs (up to 1800 tokens) so institutional analyses never get cut off
     kwargs["max_tokens"] = kwargs.get("max_tokens", 1800)
     kwargs["temperature"] = kwargs.get("temperature", 0.1)
     kwargs["frequency_penalty"] = 0.15
