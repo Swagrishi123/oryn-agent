@@ -16,11 +16,11 @@ try:
         importlib.reload(sys.modules["tools"])
     import tools
     tool_get_financial_data = getattr(tools, "tool_get_financial_data", lambda x: {"error": "unavailable"})
-    fetch_institutional_officeholder_facts = getattr(tools, "fetch_institutional_officeholder_facts", lambda x: None)
+    dynamic_web_search = getattr(tools, "dynamic_web_search", lambda x: None)
 except Exception:
     def tool_get_financial_data(x):
         return {"error": "unavailable"}
-    def fetch_institutional_officeholder_facts(x):
+    def dynamic_web_search(x):
         return None
 
 COMMON_ENGLISH_STOPWORDS = {
@@ -33,31 +33,26 @@ COMMON_ENGLISH_STOPWORDS = {
 }
 
 SYSTEM_PROMPT = (
-    "You are ORYN Analyst, an elite institutional BFSI quantitative analyst and investment banking advisor.\n\n"
+    "You are ORYN Analyst, an elite institutional BFSI quantitative analyst and research advisor.\n\n"
     "CRITICAL CONTEXT & FACT PROTOCOL:\n"
-    "- When [VERIFIED LIVE EXCHANGE DATA] or [VERIFIED INSTITUTIONAL RECORD] is provided in the prompt, "
-    "you MUST base your analysis strictly on those facts. Never contradict the provided context.\n"
-    "- For leadership questions (e.g., RBI Governor, Governor of West Bengal), accurately state the officeholder and tenure using the verified record.\n\n"
-    "CRITICAL TABLE & COMPLETION RULES:\n"
-    "1. COMPLETE EVERY DELIVERABLE: Never cut off mid-sentence or stop mid-table. Always generate every row and column to completion.\n"
-    "2. DIRECT STRUCTURAL DELIVERY: Eliminate introductory pleasantries and filler text. Begin directly with the analysis header.\n"
-    "3. STRICT MARKDOWN TABLE SYNTAX:\n"
-    "   - Every table row MUST be separated by an actual newline (\\n) and start and end with a pipe (|).\n"
-    "   - Always place the divider row (| :--- | :--- |) on its own separate line directly below the header row.\n"
-    "   - Inside table data cells, use plain numbers without naked currency symbols to ensure clean table borders.\n"
-    "4. CHAPTER 11 RESTRUCTURING & WATERFALL RULES:\n"
+    "- When [VERIFIED LIVE EXCHANGE DATA] or [VERIFIED LIVE WEB RESEARCH] is provided in the prompt, "
+    "you MUST base your analysis strictly on those fresh live facts.\n"
+    "- If asked who holds a public office or leadership position, name the incumbent, their tenure, and predecessor directly.\n\n"
+    "CRITICAL PRESENTATION & TABLE RULES:\n"
+    "1. DIRECT STRUCTURAL DELIVERY: Eliminate introductory pleasantries. Begin directly with the answer or report title.\n"
+    "2. EXECUTIVE CLARITY FOR FACTUAL QUERIES: Give a clear, direct answer first. "
+    "If providing a table, ALWAYS include the separator row (| :--- | :--- |) immediately after the header.\n"
+    "3. INSTITUTIONAL RESTRUCTURING & WATERFALL RULES:\n"
     "   - Always present priority distributions inside a single consolidated Markdown table.\n"
-    "   - Do NOT write repetitive text blocks like 'Step 1: DIP... Step 2: First Lien...'. "
-    "Consolidate all steps into the table so the response completes before token limits.\n"
     "   - Sum total prepetition claims accurately before calculating recoveries.\n"
-    "5. FIG & BANKING REASONING:\n"
+    "4. FIG & BANKING REASONING:\n"
     "   - Asset-sensitive banks face NIM COMPRESSION during rate cuts.\n"
     "   - High deposit beta cushions NIM; low deposit beta causes severe compression.\n"
     "   - Rate cuts increase bond prices, reversing AFS paper losses and boosting TCE.\n"
-    "6. LEVERAGED FINANCE (LEVFIN) RULES:\n"
-    "   - Pricing Hierarchy: Subordinated/unsecured debt MUST price HIGHER than senior secured debt.\n"
-    "   - Sources & Uses percentages must divide by Total Sources/Uses and sum to exactly 100.0%.\n"
-    "7. DCF MODELING: For DCF requests, execute quantitative schedules, render a matplotlib chart, and write 'model.xlsx'."
+    "5. LEVERAGED FINANCE (LEVFIN) RULES:\n"
+    "   - Subordinated/unsecured debt MUST price HIGHER than senior secured debt.\n"
+    "   - Sources & Uses percentages must sum to exactly 100.0%.\n"
+    "6. DCF MODELING: For DCF requests, execute quantitative schedules, render a matplotlib chart, and write 'model.xlsx'."
 )
 
 CACHED_WORKING_MODEL = None
@@ -90,14 +85,7 @@ def extract_and_fetch_live_data(prompt: str, status_callback=None) -> str:
     injected_context = []
     p_lower = prompt.lower()
 
-    # 1. Macro Officeholder Check
-    macro_facts = fetch_institutional_officeholder_facts(prompt)
-    if macro_facts:
-        if status_callback:
-            status_callback("info", "Retrieved verified institutional officeholder records...")
-        injected_context.append(macro_facts)
-
-    # 2. Hardened Equity Discovery
+    # 1. Equity Discovery
     found_tickers = set()
     for name, sym in KNOWN_ENTITIES.items():
         if re.search(r'\b' + re.escape(name) + r'\b', p_lower):
@@ -140,39 +128,63 @@ def extract_and_fetch_live_data(prompt: str, status_callback=None) -> str:
                 "\n".join(market_rows)
             )
 
+    # 2. Autonomous Dynamic Web Search for General Knowledge & Institutional Facts
+    is_gk_query = any(w in p_lower for w in [
+        "who is", "who was", "current governor", "current chief", "current minister",
+        "governor of", "cm of", "ceo of", "chairman of", "president of", "latest",
+        "news", "holding office", "incumbent", "tenure"
+    ]) or ("governor" in p_lower and not target_tickers)
+
+    if is_gk_query:
+        if status_callback:
+            status_callback("info", "Autonomous web search: scraping live verified records...")
+        scraped_intel = dynamic_web_search(prompt)
+        if scraped_intel:
+            injected_context.append(
+                f"[VERIFIED LIVE WEB RESEARCH - RECENT INFORMATION]:\n{scraped_intel}"
+            )
+
     if injected_context:
         return "\n\n" + "\n\n".join(injected_context) + "\n\n"
     return ""
 
 def sanitize_report_formatting(text: str) -> str:
-    """Canonical Markdown repair pipeline."""
+    """Robust Markdown repair pipeline that fixes missing table boundaries and dividers."""
     cleaned = re.sub(r'```(?:python)?\s*[\s\S]*?```', '', text)
     cleaned = re.sub(r'\|\s*\|', '|\n|', cleaned)
 
     lines = cleaned.split('\n')
     output = []
-    in_table = False
+    current_table_lines = []
+
+    def flush_table(tbl):
+        if not tbl:
+            return []
+        if len(tbl) >= 2 and not any('---' in r for r in tbl[:2]):
+            header_cols = [c.strip() for c in tbl[0].strip('|').split('|')]
+            num_cols = len(header_cols)
+            divider = "| " + " | ".join([":---"] * num_cols) + " |"
+            tbl.insert(1, divider)
+        return [""] + tbl + [""]
 
     for line in lines:
         stripped = line.strip()
-        if stripped.startswith('|'):
+        if '|' in stripped:
+            if not stripped.startswith('|'):
+                stripped = '| ' + stripped
             if not stripped.endswith('|'):
-                stripped = stripped + " |"
-            if not in_table:
-                if output and output[-1] != "":
-                    output.append("")
-                in_table = True
-            output.append(stripped)
+                stripped = stripped + ' |'
+            current_table_lines.append(stripped)
         else:
-            if in_table:
-                if output and output[-1] != "":
-                    output.append("")
-                in_table = False
+            if current_table_lines:
+                output.extend(flush_table(current_table_lines))
+                current_table_lines = []
             output.append(line)
 
+    if current_table_lines:
+        output.extend(flush_table(current_table_lines))
+
     res = '\n'.join(output)
-    # Neutralize KaTeX inline math hijacking: KaTeX strictly forbids whitespace after opening $
-    # Converting '$100' -> '$ 100' preserves the currency symbol while preventing KaTeX from entering math mode
     res = re.sub(r'\$([0-9])', r'$ \1', res)
     return re.sub(r'\n{3,}', '\n\n', res).strip()
 
@@ -295,7 +307,6 @@ def generate_deterministic_dcf_artifacts(user_input: str) -> tuple[str, bytes, b
     pv_tv = tv / (1.10 ** years)
     ev = sum_pv_ufcf + pv_tv
 
-    # Institutional standard formatting: units in headers, clean numbers in data cells
     df_proj = pd.DataFrame({
         "Year": [str(y) for y in years_idx],
         "Revenue (USD M)": [f"{x:.2f}" for x in rev],
@@ -319,7 +330,7 @@ def generate_deterministic_dcf_artifacts(user_input: str) -> tuple[str, bytes, b
 
     rows = ["| " + " | ".join(map(str, row)) + " |" for row in df_proj.values]
     headers = "| " + " | ".join(df_proj.columns) + " |"
-    dividers = "| " + " | ".join(["---"] * len(df_proj.columns)) + " |"
+    dividers = "| " + " | ".join([":---"] * len(df_proj.columns)) + " |"
     table_md = "\n".join([headers, dividers] + rows)
 
     calc_briefing = (
