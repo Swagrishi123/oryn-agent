@@ -3,27 +3,7 @@ import re
 import requests
 import yfinance as yf
 
-# Tool schemas registered for Groq reference
-AGENT_TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "get_financial_data",
-            "description": "Fetch real-time stock price, 52-week range, and market cap for Indian (NSE/BSE) and global equities.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "ticker": {
-                        "type": "string",
-                        "description": "Ticker symbol, e.g. RELIANCE, TCS, INFY, HDFCBANK, AAPL"
-                    }
-                },
-                "required": ["ticker"]
-            }
-        }
-    }
-]
-
+# Institutional baseline benchmarks to guarantee values are never empty
 INSTITUTIONAL_BENCHMARKS = {
     "RELIANCE": {
         "company_name": "Reliance Industries Limited",
@@ -61,15 +41,6 @@ INSTITUTIONAL_BENCHMARKS = {
         "52w_low": "₹1,363.55",
         "currency": "INR"
     }
-}
-
-COMMON_ENGLISH_STOPWORDS = {
-    "CAN", "YOU", "PULL", "UP", "LIVE", "MARKET", "DATA", "FOR", "AND", "SHOW",
-    "THEIR", "IN", "CLEAN", "TABLE", "WHAT", "WHO", "IS", "THE", "GIVE", "GET",
-    "ME", "OF", "WITH", "THIS", "THAT", "FROM", "OUT", "RUN", "HOW", "ABOUT",
-    "NOW", "ESTIMATE", "PRICE", "CAP", "RANGE", "RATIO", "STOCK", "SHARE",
-    "USD", "INR", "NSE", "BSE", "PE", "EV", "DIP", "EBITDA", "FCF", "APR",
-    "LBO", "DCF", "WACC", "TCE", "NIM", "RBI", "SEBI", "FED", "CEO", "CFO"
 }
 
 def fetch_yahoo_v8_chart(symbol: str) -> dict | None:
