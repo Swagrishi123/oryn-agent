@@ -59,13 +59,23 @@ def extract_code_from_markdown(text: str) -> str | None:
     return None
 
 def sanitize_report_formatting(text: str) -> str:
-    """Restores linebreaks around Markdown tables so Streamlit never renders them as run-on text."""
+    """Fixes collapsed markdown tables, removes leaking delimiters, 
+    and prevents raw '---' dashes from bleeding into the user interface."""
     cleaned = re.sub(r'```(?:python)?\s*[\s\S]*?```', '', text)
+
+    # 1. Split table headers, divider rows (| :--- |), and rows that got crammed onto one line
+    cleaned = re.sub(r'(\|\s*)\n?(\|\s*:?---)', r'\1\n\2', cleaned)
+    cleaned = re.sub(r'(:?---:?\s*\|)\s*(\|)', r'\1\n\2', cleaned)
+    cleaned = re.sub(r'(\|\s*[A-Za-z0-9\$\%][^|\n]*\|)\s*(\|)', r'\1\n\2', cleaned)
+
+    # 2. Ensure blank line spacing before and after tables
     cleaned = re.sub(r'([^\n])\n(\|.*\|)', r'\1\n\n\2', cleaned)
     cleaned = re.sub(r'(\|.*\|)\n([^\n|])', r'\1\n\n\2', cleaned)
-    cleaned = re.sub(r'(?<!\\)\$', r'\$', cleaned)
-    return re.sub(r'\n{3,}', '\n\n', cleaned).strip()
 
+    # 3. Clean up formatting artifacts
+    cleaned = re.sub(r'(?<!\\)\$', r'\$', cleaned)
+    cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
+    return cleaned.strip()
 def enforce_sandbox_contracts(code_str: str) -> str:
     clean_code = re.sub(r'ExcelWriter\s*\(\s*[\'"][^\'"]+\.xlsx[\'"]', 'ExcelWriter("model.xlsx"', code_str)
     clean_code = re.sub(r'\.to_excel\s*\(\s*[\'"][^\'"]+\.xlsx[\'"]', '.to_excel("model.xlsx"', clean_code)
