@@ -2,19 +2,36 @@ import io
 import json
 import os
 import re
+import sys
 import time
+import importlib
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from groq import Groq
-from tools import (
-    AGENT_TOOLS, 
-    COMMON_ENGLISH_STOPWORDS,
-    tool_get_financial_data, 
-    fetch_institutional_officeholder_facts,
-    tool_web_search
-)
-from sandbox import tool_python_interpreter
+
+# Safely import functions from tools without crashing on cached modules
+try:
+    if "tools" in sys.modules:
+        importlib.reload(sys.modules["tools"])
+    import tools
+    tool_get_financial_data = getattr(tools, "tool_get_financial_data", lambda x: {"error": "unavailable"})
+    fetch_institutional_officeholder_facts = getattr(tools, "fetch_institutional_officeholder_facts", lambda x: None)
+except Exception:
+    def tool_get_financial_data(x):
+        return {"error": "unavailable"}
+    def fetch_institutional_officeholder_facts(x):
+        return None
+
+# English words to ignore so all-caps query words are not treated as stock tickers
+COMMON_ENGLISH_STOPWORDS = {
+    "CAN", "YOU", "PULL", "UP", "LIVE", "MARKET", "DATA", "FOR", "AND", "SHOW",
+    "THEIR", "IN", "CLEAN", "TABLE", "WHAT", "WHO", "IS", "THE", "GIVE", "GET",
+    "ME", "OF", "WITH", "THIS", "THAT", "FROM", "OUT", "RUN", "HOW", "ABOUT",
+    "NOW", "ESTIMATE", "PRICE", "CAP", "RANGE", "RATIO", "STOCK", "SHARE",
+    "USD", "INR", "NSE", "BSE", "PE", "EV", "DIP", "EBITDA", "FCF", "APR",
+    "LBO", "DCF", "WACC", "TCE", "NIM", "RBI", "SEBI", "FED", "CEO", "CFO"
+}
 
 SYSTEM_PROMPT = (
     "You are ORYN Analyst, an elite institutional BFSI quantitative analyst and investment banking advisor.\n\n"
@@ -87,13 +104,11 @@ def extract_and_fetch_live_data(prompt: str, status_callback=None) -> str:
         if re.search(r'\b' + re.escape(name) + r'\b', p_lower):
             found_tickers.add(sym)
 
-    # Extract uppercase tokens, strictly filtering out English stopwords
     raw_candidates = re.findall(r'\b[A-Z]{2,10}\b', prompt)
     for c in raw_candidates:
         if c not in COMMON_ENGLISH_STOPWORDS:
             found_tickers.add(c)
 
-    # Hard-limit to max 4 lookups to prevent network throttling
     target_tickers = list(found_tickers)[:4]
 
     if target_tickers:
@@ -284,7 +299,7 @@ def generate_deterministic_dcf_artifacts(user_input: str) -> tuple[str, bytes, b
     
     img_buf = io.BytesIO()
     plt.savefig(img_buf, format='png', dpi=200)
-    plt.close('all')  # Prevent memory leakage
+    plt.close('all')
 
     excel_buf = io.BytesIO()
     with pd.ExcelWriter(excel_buf, engine='openpyxl') as writer:
