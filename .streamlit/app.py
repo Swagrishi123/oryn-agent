@@ -61,13 +61,17 @@ with st.sidebar:
     if key_input:
         st.session_state.api_key = key_input.strip()
 
-    active_model = st.selectbox(
+active_model = st.selectbox(
         "Reasoning Engine:",
-        options=["llama-3.1-8b-instant", "qwen/qwen3.8-27b"],
+        options=[
+            "llama-3.3-70b-versatile",
+            "llama3-70b-8192",
+            "llama3-8b-8192",
+            "mixtral-8x7b-32768"
+        ],
         index=0,
-        help="Institutional reasoning engines"
-    )
-    hitl_enabled = st.toggle("🛡️ HITL Safety Guardrails", value=True)
+        help="Verified active Groq reasoning engines"
+    )    hitl_enabled = st.toggle("🛡️ HITL Safety Guardrails", value=True)
 
 # --- Helper Functions ---
 def strip_leaked_code(text: str) -> str:
