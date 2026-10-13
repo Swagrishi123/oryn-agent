@@ -46,7 +46,7 @@ INSTITUTIONAL_BENCHMARKS = {
 }
 
 def extract_core_entity(query: str) -> str:
-    """Strips conversational phrases to isolate the search entity."""
+    """Strips conversational noise to isolate the underlying entity."""
     clean = re.sub(
         r'(?i)\b(who is the founder of|who founded|founder of|founders of|who is the ceo of|ceo of|'
         r'who is the governor of|current governor of|governor of|who is the cm of|cm of|chief minister of|'
@@ -58,29 +58,63 @@ def extract_core_entity(query: str) -> str:
     return clean if len(clean) >= 2 else query.strip()
 
 def fetch_wikipedia_entity_summary(entity: str) -> str | None:
-    """Queries Wikipedia REST summary API for factual encyclopedic data."""
-    headers = {"User-Agent": "ORYNAnalyst/2.0 (Institutional BFSI Research)"}
+    """Queries Wikipedia's Action API for encyclopedic facts without getting blocked on cloud IPs."""
+    headers = {"User-Agent": "ORYNAnalyst/2.0 (Institutional BFSI Research; contact@oryn.ai)"}
     encoded_search = urllib.parse.quote_plus(entity)
+    
+    # 1. Direct Page Extract
     try:
-        search_url = f"https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch={encoded_search}&utf8=&format=json&srlimit=1"
-        res = requests.get(search_url, headers=headers, timeout=2.5)
+        url = (
+            f"https://en.wikipedia.org/w/api.php?action=query&prop=extracts"
+            f"&exintro=true&explaintext=true&titles={encoded_search}&redirects=1&format=json"
+        )
+        res = requests.get(url, headers=headers, timeout=3.5)
         if res.status_code == 200:
-            results = res.json().get("query", {}).get("search", [])
-            if results:
-                title = results[0].get("title", "")
-                if title:
-                    summary_url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{urllib.parse.quote(title)}"
-                    s_res = requests.get(summary_url, headers=headers, timeout=2.5)
-                    if s_res.status_code == 200:
-                        extract = s_res.json().get("extract", "")
-                        if extract and len(extract) > 40:
-                            return f"• [{title} Verified Record]: {extract}"
+            pages = res.json().get("query", {}).get("pages", {})
+            for page_id, page_data in pages.items():
+                if page_id != "-1":
+                    extract = page_data.get("extract", "").strip()
+                    title = page_data.get("title", entity)
+                    if extract and len(extract) > 30:
+                        summary = ". ".join(extract.split(". ")[:3]).strip()
+                        if not summary.endswith("."):
+                            summary += "."
+                        return f"• [{title} Verified Record]: {summary}"
     except Exception:
         pass
+
+    # 2. Search Fallback (if exact title match fails)
+    try:
+        search_url = f"https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch={encoded_search}&utf8=&format=json&srlimit=1"
+        s_res = requests.get(search_url, headers=headers, timeout=3.0)
+        if s_res.status_code == 200:
+            results = s_res.json().get("query", {}).get("search", [])
+            if results:
+                found_title = results[0].get("title", "")
+                if found_title:
+                    encoded_title = urllib.parse.quote_plus(found_title)
+                    sub_url = (
+                        f"https://en.wikipedia.org/w/api.php?action=query&prop=extracts"
+                        f"&exintro=true&explaintext=true&titles={encoded_title}&redirects=1&format=json"
+                    )
+                    sub_res = requests.get(sub_url, headers=headers, timeout=3.0)
+                    if sub_res.status_code == 200:
+                        sub_pages = sub_res.json().get("query", {}).get("pages", {})
+                        for pid, pdata in sub_pages.items():
+                            if pid != "-1":
+                                sub_extract = pdata.get("extract", "").strip()
+                                if sub_extract and len(sub_extract) > 30:
+                                    summary = ". ".join(sub_extract.split(". ")[:3]).strip()
+                                    if not summary.endswith("."):
+                                        summary += "."
+                                    return f"• [{found_title} Verified Record]: {summary}"
+    except Exception:
+        pass
+
     return None
 
 def fetch_google_news_rss(query: str, max_items: int = 3) -> str | None:
-    """Queries machine-readable RSS syndication feeds without datacenter IP blocks."""
+    """Queries public RSS syndication feeds for timestamped recent developments."""
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0 Safari/537.36"}
     encoded_q = urllib.parse.quote_plus(query.strip())
     rss_url = f"https://news.google.com/rss/search?q={encoded_q}&hl=en-IN&gl=IN&ceid=IN:en"
@@ -104,15 +138,20 @@ def fetch_google_news_rss(query: str, max_items: int = 3) -> str | None:
     return None
 
 def dynamic_web_search(query: str) -> str | None:
-    """Layered retrieval: Encyclopedic entity lookup + timestamped news headlines."""
+    """Layered retrieval engine: Encyclopedic records first, followed by syndication news."""
     clean_entity = extract_core_entity(query)
     findings = []
+    
+    # 1. Fact & Identity search (handles SpaceX, founders, incumbents)
     wiki_intel = fetch_wikipedia_entity_summary(clean_entity)
     if wiki_intel:
         findings.append(wiki_intel)
+        
+    # 2. Recent news syndication
     news_intel = fetch_google_news_rss(query)
     if news_intel:
         findings.append(news_intel)
+        
     if findings:
         return "\n\n".join(findings)
     return None
@@ -180,6 +219,22 @@ def tool_get_financial_data(ticker: str) -> dict:
         if y_data:
             gf_data = fetch_google_finance_metrics(clean_sym)
             mcap = gf_data.get("market_cap") if gf_data else None
+            
+            # Dynamic market cap fallback via yfinance fast_info
+            if not mcap:
+                try:
+                    t = yf.Ticker(sym)
+                    raw_m = getattr(t.fast_info, "market_cap", None)
+                    if raw_m and raw_m > 0:
+                        if ".NS" in sym or ".BO" in sym:
+                            mcap = f"₹{raw_m / 1e7:,.0f} Cr"
+                        elif raw_m >= 1e12:
+                            mcap = f"${raw_m / 1e12:.2f}T"
+                        else:
+                            mcap = f"${raw_m / 1e9:.2f}B"
+                except Exception:
+                    pass
+
             if not mcap and clean_sym in INSTITUTIONAL_BENCHMARKS:
                 mcap = INSTITUTIONAL_BENCHMARKS[clean_sym]["market_cap"]
 
