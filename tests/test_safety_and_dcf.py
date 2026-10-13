@@ -31,7 +31,7 @@ def test_dcf_uses_assumptions_and_reports_model_defaults():
         "DCF with starting revenue of $100 million, revenue growth 10%, "
         "EBITDA margin 20%, WACC 9%, terminal growth 2%"
     )
-    assert "Starting revenue: USD 100.00M" in report
+    assert "Year-0 starting revenue: USD 100.00M" in report
     assert "Annual revenue growth: 10.00%" in report
     assert "Illustrative" in report
     assert plot_bytes
