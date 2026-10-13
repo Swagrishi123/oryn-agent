@@ -46,3 +46,7 @@ def test_dcf_rejects_invalid_terminal_growth():
     assert "Invalid DCF assumptions" in report
     assert plot_bytes is None
     assert workbook_bytes is None
+
+def test_formatter_preserves_fenced_code_blocks():
+    source = "Example:\n\n```python\nprint('$5')\n```"
+    assert agent.sanitize_report_formatting(source) == source
