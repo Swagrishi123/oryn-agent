@@ -12,24 +12,23 @@ from sandbox import tool_python_interpreter
 
 SYSTEM_PROMPT = (
     "You are ORYN Analyst, an elite institutional BFSI quantitative analyst and investment banking advisor.\n"
-    "CRITICAL FORMAT RULES (STRICT TOKEN PRESERVATION):\n"
-    "1. NO GREETINGS OR OPENING FLUFF: Never output 'Hello', 'As the VP...', or conversational introductions. "
-    "Begin immediately with the title header.\n"
-    "2. STRICT TABLE FORMATTING: Always separate table rows with actual newlines (\\n). "
-    "Every table must follow this exact structure:\n"
-    "| Col 1 | Col 2 |\n"
-    "| :--- | :--- |\n"
-    "| Val 1 | Val 2 |\n"
-    "Never concatenate table rows into a single text block.\n"
-    "3. HIGH DENSITY BULLETS: Keep explanations to single-sentence bullet points for Breakeven, Leverage, and Goodwill. "
-    "Total response MUST be under 350 tokens.\n"
-    "4. ACCRETION MECHANICS:\n"
-    "   - Stock: Accretion driven by P/E arbitrage (Buyer P/E > Target P/E is accretive).\n"
-    "   - Debt: Driven by Target Earnings Yield (1/Target P/E) vs After-Tax Debt Cost [Rate * (1 - Tax)]. "
-    "If After-Tax Debt Cost > Target Yield, the deal is DILUTIVE.\n"
-    "   - Breakeven pre-tax debt = Target Earnings Yield / (1 - Tax Rate).\n"
-    "   - Equity dilution = Deal Price / Buyer Market Cap.\n"
-    "5. For DCF models, execute code, produce chart, and write 'model.xlsx'."
+    "CRITICAL OPERATING & FORMATTING RULES:\n"
+    "1. DIRECT STRUCTURAL DELIVERY: Eliminate all introductory greetings, pleasantries, and meta-commentary. "
+    "Begin immediately with the report title.\n"
+    "2. STRICT MARKDOWN TABLE SYNTAX: Every table row MUST be separated by an actual newline (\\n) and start/end with a pipe (|). "
+    "Never concatenate table rows into run-on paragraphs. Use standard headers and divider rows (| :--- | :--- |).\n"
+    "3. INSTITUTIONAL FIG & BANKING REASONING:\n"
+    "   - Asset-Sensitive Banks: In a RATE-CUT environment, loan yields reprice downward faster than deposit costs can be cut. "
+    "Therefore, Net Interest Margin (NIM) strictly COMPRESSES (Asset Yield Delta - Liability Cost Delta is negative).\n"
+    "   - Deposit Beta Direction in Rate Cuts:\n"
+    "     * Low Deposit Beta (e.g., 30%): Deposit costs are sticky downward (-30 bps relief), causing SEVERE NIM COMPRESSION (-45 bps).\n"
+    "     * High Deposit Beta (e.g., 60%): Deposit costs drop aggressively (-60 bps relief), CUSHIONING margins and limiting NIM compression (-15 bps).\n"
+    "   - NII Impact: Asset Yield Drag minus Liability Cost Relief multiplied by Earning Assets. Never report positive NIM expansion for a rate cut on an asset-sensitive bank.\n"
+    "4. M&A ACCRETION REASONING:\n"
+    "   - Stock deals depend on relative P/E arbitrage.\n"
+    "   - Debt/cash deals depend strictly on Target Earnings Yield (1 / Target Purchase P/E) vs. After-Tax Cost of Debt [Rate * (1 - Tax)].\n"
+    "5. FACTUAL INTEGRITY & MULTI-TURN CONTEXT: Maintain conversational memory across turns. Never fabricate executive biographies, regulatory appointments, or fake personas.\n"
+    "6. DCF MODELING: For DCF requests, execute quantitative schedules, render a matplotlib chart, and write 'model.xlsx'."
 )
 
 CACHED_WORKING_MODEL = None
@@ -152,7 +151,7 @@ def get_best_available_model(client: Groq, exclude_model: str = None, force_refr
     raise RuntimeError(f"Could not connect to any active Groq text model. Available IDs: [{avail_str}]")
 
 def create_completion_with_fallback(client: Groq, preferred_model: str = None, status_callback=None, **kwargs):
-    """Executes completions with auto-throttling, delay resolution, and model failover."""
+    """Executes completions with auto-throttling, rate limit cooldowns, and cross-model failover."""
     global CACHED_WORKING_MODEL
     
     filter_out = ["guard", "safeguard", "orpheus", "whisper", "allam", "arabic"]
@@ -161,10 +160,11 @@ def create_completion_with_fallback(client: Groq, preferred_model: str = None, s
     else:
         active_model = get_best_available_model(client)
         
+    # Set to 850 (maximum allowable output budget on Groq's 1000 OTPM ceiling)
     if "max_tokens" in kwargs:
-        kwargs["max_tokens"] = min(kwargs["max_tokens"], 550)
+        kwargs["max_tokens"] = min(kwargs["max_tokens"], 850)
     else:
-        kwargs["max_tokens"] = 550
+        kwargs["max_tokens"] = 850
 
     if "temperature" not in kwargs:
         kwargs["temperature"] = 0.1
@@ -176,30 +176,31 @@ def create_completion_with_fallback(client: Groq, preferred_model: str = None, s
     except Exception as e:
         err_str = str(e).lower()
         
-        # Rate Limit Mitigation (429 OTPM)
+        # Scenario 1: OTPM Rate Limit Reached
         if "429" in err_str or "rate_limit_exceeded" in err_str or "output tokens per minute" in err_str:
             delay_match = re.search(r'try again in ([0-9.]+)s', err_str)
             sleep_sec = float(delay_match.group(1)) + 0.5 if delay_match else 2.5
             
             if status_callback:
-                status_callback("info", f"Rate limit cooling down ({sleep_sec:.1f}s)... failing over to secondary model.")
+                status_callback("info", f"Rate limit pause ({sleep_sec:.1f}s)... retrying on secondary model.")
             
             time.sleep(sleep_sec)
             
+            # Failover to secondary model with independent quota
             alt_model = get_best_available_model(client, exclude_model=active_model, force_refresh=True)
             kwargs["model"] = alt_model
-            kwargs["max_tokens"] = 380
+            kwargs["max_tokens"] = 600
             try:
                 return client.chat.completions.create(**kwargs)
             except Exception:
                 kwargs["model"] = active_model
-                kwargs["max_tokens"] = 350
+                kwargs["max_tokens"] = 500
                 return client.chat.completions.create(**kwargs)
 
-        # Model Not Found / Decommissioned (404 / 400)
+        # Scenario 2: Model decommissioned or access issue
         if "404" in err_str or "model_not_found" in err_str or "decommissioned" in err_str or "400" in err_str or "access" in err_str:
             if status_callback:
-                status_callback("info", f"Model `{active_model}` not accessible. Auto-switching to working model...")
+                status_callback("info", f"Model `{active_model}` not accessible. Auto-switching...")
             active_model = get_best_available_model(client, exclude_model=active_model, force_refresh=True)
             kwargs["model"] = active_model
             return client.chat.completions.create(**kwargs)
@@ -404,7 +405,7 @@ def run_analyst_agent(
 
     is_dcf_calc = is_quantitative_model_request(user_input)
 
-    # Branch 1: M&A Advisory, FIG Equity Research, General Macro Briefings
+    # Branch 1: M&A Advisory, FIG Equity Research, Macro & Industry Memos
     if not is_dcf_calc:
         try:
             messages = build_contextual_messages(user_input, SYSTEM_PROMPT, max_turns=3)
@@ -413,7 +414,7 @@ def run_analyst_agent(
                 preferred_model=selected_model,
                 status_callback=status_callback,
                 messages=messages,
-                max_tokens=650,
+                max_tokens=850,
                 temperature=0.1
             )
             elapsed = time.perf_counter() - start_time
@@ -439,7 +440,7 @@ def run_analyst_agent(
             messages=messages,
             tools=AGENT_TOOLS,
             tool_choice="auto",
-            max_tokens=550,
+            max_tokens=850,
             temperature=0.1
         )
         msg = response.choices[0].message
