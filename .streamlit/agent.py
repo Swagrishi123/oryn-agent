@@ -38,18 +38,14 @@ FINANCIAL_ACRONYMS_BLACKLIST = {
 
 SYSTEM_PROMPT = (
     "You are ORYN Analyst, an elite institutional BFSI quantitative analyst and corporate intelligence advisor.\n\n"
-    "CRITICAL CONVERSATION & MEMORY VAULT PROTOCOL:\n"
+    "CRITICAL CONVERSATION PROTOCOL:\n"
     "1. DOCUMENT-FIRST QUANTITATIVE RIGOR: When institutional filing content is provided under [OFFICIAL FINANCIAL FILING DOCUMENT ATTACHED], "
     "perform all quantitative calculations, covenant compliance tests, and balance sheet waterfalls DIRECTLY and FULLY using the "
-    "exact numbers, sections, and definitions in that filing text. Answer all requested parts systematically with clear step-by-step arithmetic. "
-    "Never generate hypothetical dialogue or transcripts.\n"
-    "2. MULTI-TURN CONTINUITY ACROSS SESSIONS: Review ALL conversation turns and archived session history in your prompt. "
-    "When a user asks to 're-run', 'sensitize', or 'modify' a previous calculation, retain ALL baseline parameters (EBITDA, purchase price, "
-    "equity check, debt balances) from the prior prompt or session archive and ONLY adjust the requested variable.\n"
-    "3. NO BRACKET TAGS OR ECHOING: NEVER output bracketed headers (e.g., [ORYN REPORT]). Begin directly with the analysis.\n"
-    "4. NO CHATBOT HEDGING: Eliminate conversational filler (e.g., 'Based on the available information'). Deliver crisp intelligence.\n"
-    "5. NO SCRIPT-WRITING: Provide the financial memorandum directly to the executive user. Never write 'USER:' or simulate another persona.\n"
-    "6. REAL-WORLD INCUMBENCY (STRICT ADHERENCE):\n"
+    "exact numbers, sections, and definitions in that filing text. Answer all requested parts systematically with clear step-by-step arithmetic.\n"
+    "2. NO SCRIPT-WRITING OR DIALOGUE: Provide the financial memorandum directly to the executive user. Never write 'USER:' or simulate another persona.\n"
+    "3. NO BRACKET TAGS OR ECHOING: NEVER output bracketed headers (e.g., [ORYN REPORT]). Begin directly with Section 1.\n"
+    "4. NO DECORATIVE DOT PADDING: Never output dot leaders (e.g., '........'). Use concise markdown tables or clean bullet points.\n"
+    "5. REAL-WORLD INCUMBENCY (STRICT ADHERENCE):\n"
     "   - Tamil Nadu: Chief Minister is M. K. Stalin (DMK), in office since May 2021.\n"
     "   - Maharashtra: Chief Minister is Devendra Fadnavis (BJP / Mahayuti), in office since December 2024.\n"
     "   - SBI: Chairman is Challa Sreenivasulu Setty (C.S. Setty), appointed August 2024.\n"
@@ -63,9 +59,8 @@ SYSTEM_PROMPT = (
     "2. ACCOUNTING DEFINITIONS & ADJUSTED EBITDA:\n"
     "   - EBITDA is Earnings BEFORE Interest, Taxes, Depreciation, and Amortization. Interest expense NEVER alters or reduces EBITDA.\n"
     "   - CRITICAL DOUBLE-COUNT GUARD: When a Credit Agreement provides 'Reported EBITDA' or 'Unadjusted EBITDA', that figure ALREADY adds back "
-    "Interest Expense, Income Taxes, and D&A. DO NOT add Interest, Taxes, or D&A to Reported EBITDA (that is a critical double-count error). "
-    "To calculate Consolidated Adjusted EBITDA from Reported EBITDA, ONLY add permissible adjustments (such as restructuring charges subject to their percentage cap).\n"
-    "   - Formula: Consolidated Adjusted EBITDA = Reported Unadjusted EBITDA + Permissible Capped Add-backs.\n"
+    "Interest Expense, Income Taxes, and D&A to Net Income. DO NOT add Interest, Taxes, or D&A to Reported EBITDA (that is a critical double-count error). "
+    "Consolidated Adjusted EBITDA = Reported Unadjusted EBITDA + Permissible Capped Add-backs.\n"
     "3. VALUATION & RESTRUCTURING WATERFALLS:\n"
     "   - Equity Value = Implied EV - Net Debt - Minority Interest - Pension Deficit + Equity Investments in Affiliates.\n"
     "   - Net Debt = Total Gross Debt - Unrestricted Cash (exclude restricted collateral cash per covenant terms).\n"
@@ -325,21 +320,8 @@ def create_completion_with_fallback(client: Groq, preferred_model: str = None, s
 
 def build_contextual_messages(user_input: str, system_prompt: str) -> list[dict]:
     history = []
-    vault_context = []
     try:
         import streamlit as st
-        # 1. Recover vault memories across resets
-        if "session_vault" in st.session_state and isinstance(st.session_state.session_vault, list):
-            for s_idx, session_turns in enumerate(st.session_state.session_vault[-3:]):
-                summary_lines = []
-                for m in session_turns:
-                    role_lbl = "USER" if m.get("role") == "user" else "ANALYST"
-                    content_snip = str(m.get("content", ""))[:400].replace("\n", " ")
-                    summary_lines.append(f"{role_lbl}: {content_snip}")
-                if summary_lines:
-                    vault_context.append(f"[ARCHIVED RUN #{s_idx + 1}]:\n" + "\n".join(summary_lines))
-
-        # 2. Recover active messages while filtering out previous refusal boilerplate and script tags
         if "messages" in st.session_state and isinstance(st.session_state.messages, list):
             stored = st.session_state.messages
             candidates = stored[:-1] if (stored and stored[-1].get("role") == "user") else stored
@@ -349,18 +331,13 @@ def build_contextual_messages(user_input: str, system_prompt: str) -> list[dict]
                 # Purge prior refusal boilerplate and script tags
                 if "please provide the relevant sections" in content.lower():
                     continue
-                # Strip any hallucinated USER dialog turns that were stored in assistant history
                 content = re.sub(r'\n+(?:USER|Human|User):\s*[\s\S]*$', '', content)
                 if role in ["user", "assistant"] and content:
                     history.append({"role": role, "content": content})
     except Exception:
         pass
 
-    prompt_with_vault = system_prompt
-    if vault_context:
-        prompt_with_vault += "\n\nPREVIOUS SESSIONS ARCHIVE (RETAINED FROM RESETS):\n" + "\n\n".join(vault_context)
-
-    return [{"role": "system", "content": prompt_with_vault}] + history + [{"role": "user", "content": user_input}]
+    return [{"role": "system", "content": system_prompt}] + history + [{"role": "user", "content": user_input}]
 
 def parse_dcf_assumptions(prompt: str) -> dict:
     p_lower = prompt.lower()
@@ -499,7 +476,7 @@ def run_analyst_agent(
             f"\"\"\"\n{pdf_text}\n\"\"\"\n\n"
             f"CRITICAL DIRECTIVE: The user's query pertains directly to the document above. Perform all quantitative "
             f"calculations, covenant compliance tests, and balance sheet waterfalls DIRECTLY and FULLY using the "
-            f"exact numbers, sections, and definitions in this filing. Answer all three parts systematically. Show step-by-step arithmetic without truncating.\n\n"
+            f"exact numbers, sections, and definitions in this filing. Answer all parts systematically. Show step-by-step arithmetic without truncating.\n\n"
         )
     elif any(k in user_input.lower() for k in ["attached", "credit agreement", "indenture", "filing"]):
         return (
