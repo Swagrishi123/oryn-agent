@@ -16,7 +16,6 @@ st.set_page_config(
 st.markdown(
     """
     <style>
-    /* Make stBottom 100% OPAQUE so chat messages never bleed behind it */
     div[data-testid="stBottom"],
     div[data-testid="stBottomBlockContainer"] {
         background-color: #ffffff !important;
@@ -27,7 +26,6 @@ st.markdown(
         z-index: 9999 !important;
     }
 
-    /* Force the typing pill to be thin, sleek, and compact (44px height) */
     div[data-testid="stChatInput"] {
         border-radius: 24px !important;
         background-color: #ffffff !important;
@@ -45,7 +43,6 @@ st.markdown(
         box-shadow: 0 4px 16px rgba(74, 20, 140, 0.14) !important;
     }
 
-    /* Single-line compact textarea with clean indent for the '+' button */
     div[data-testid="stChatInput"] textarea {
         padding-left: 46px !important;
         padding-right: 40px !important;
@@ -61,7 +58,6 @@ st.markdown(
         overflow: hidden !important;
     }
 
-    /* Send Button */
     div[data-testid="stChatInput"] button {
         border-radius: 50% !important;
         width: 30px !important;
@@ -74,7 +70,6 @@ st.markdown(
         margin: auto 2px !important;
     }
 
-    /* Anchor the '+' button cleanly on the left of the chat pill */
     .st-key-gemini_attach_btn {
         position: absolute !important;
         left: 14px !important;
@@ -106,7 +101,6 @@ st.markdown(
         box-shadow: 0 1px 4px rgba(74, 20, 140, 0.12) !important;
     }
 
-    /* Document Drawer Styling */
     .doc-drawer {
         background-color: #faf5ff;
         border: 1px solid #d8b4fe;
@@ -115,7 +109,6 @@ st.markdown(
         margin-bottom: 8px;
     }
 
-    /* Discreet Disclaimer */
     .oryn-disclaimer {
         text-align: center;
         margin-top: 5px;
@@ -197,7 +190,7 @@ with st.sidebar:
             st.rerun()
 
 # ==========================================
-# MAIN INTERACTION PANEL (WITH ORYN EMBLEM)
+# MAIN INTERACTION PANEL
 # ==========================================
 st.markdown(
     """
@@ -237,7 +230,7 @@ for message in st.session_state.messages:
 bottom_area = st.bottom if hasattr(st, "bottom") else st.container()
 
 with bottom_area:
-    # 1. Expandable PDF Drawer (Slides open above typing bar)
+    # 1. Expandable PDF Drawer (Preserves raw in-memory bytes)
     if st.session_state.show_uploader:
         with st.container():
             st.markdown(
@@ -257,8 +250,12 @@ with bottom_area:
                 help="Dense filings up to 200MB are indexed dynamically."
             )
             if uploaded_file is not None:
-                st.session_state.active_pdf = uploaded_file
-                # Auto-close drawer on successful upload to save screen space
+                # Capture raw bytes immediately into session state
+                st.session_state.active_pdf = {
+                    "name": uploaded_file.name,
+                    "size": uploaded_file.size,
+                    "data": uploaded_file.getvalue()
+                }
                 st.session_state.show_uploader = False
                 st.rerun()
 
@@ -266,7 +263,7 @@ with bottom_area:
     if st.session_state.active_pdf is not None and not st.session_state.show_uploader:
         c_badge, c_detach = st.columns([6, 1])
         with c_badge:
-            st.info(f"📄 **Filing Loaded:** {st.session_state.active_pdf.name} ({(st.session_state.active_pdf.size)/(1024*1024):.1f} MB)")
+            st.info(f"📄 **Filing Loaded:** {st.session_state.active_pdf['name']} ({(st.session_state.active_pdf['size'])/(1024*1024):.1f} MB)")
         with c_detach:
             if st.button("✕", help="Detach filing"):
                 st.session_state.active_pdf = None
