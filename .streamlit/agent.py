@@ -41,13 +41,14 @@ SYSTEM_PROMPT = (
     "CRITICAL CONVERSATION & MEMORY VAULT PROTOCOL:\n"
     "1. DOCUMENT-FIRST QUANTITATIVE RIGOR: When institutional filing content is provided under [OFFICIAL FINANCIAL FILING DOCUMENT ATTACHED], "
     "perform all quantitative calculations, covenant compliance tests, and balance sheet waterfalls DIRECTLY and FULLY using the "
-    "exact numbers, sections, and definitions in that filing text. Show step-by-step arithmetic for all parts. Never hallucinate user dialogue.\n"
+    "exact numbers, sections, and definitions in that filing text. Answer all requested parts systematically with clear step-by-step arithmetic. "
+    "Never generate hypothetical dialogue or transcripts.\n"
     "2. MULTI-TURN CONTINUITY ACROSS SESSIONS: Review ALL conversation turns and archived session history in your prompt. "
     "When a user asks to 're-run', 'sensitize', or 'modify' a previous calculation, retain ALL baseline parameters (EBITDA, purchase price, "
     "equity check, debt balances) from the prior prompt or session archive and ONLY adjust the requested variable.\n"
     "3. NO BRACKET TAGS OR ECHOING: NEVER output bracketed headers (e.g., [ORYN REPORT]). Begin directly with the analysis.\n"
     "4. NO CHATBOT HEDGING: Eliminate conversational filler (e.g., 'Based on the available information'). Deliver crisp intelligence.\n"
-    "5. CLEAN MARKDOWN FORMATTING: When presenting calculations or schedules, use clear bullet points or standard markdown tables with clean newlines between every row.\n"
+    "5. NO SCRIPT-WRITING: Provide the financial memorandum directly to the executive user. Never write 'USER:' or simulate another persona.\n"
     "6. REAL-WORLD INCUMBENCY (STRICT ADHERENCE):\n"
     "   - Tamil Nadu: Chief Minister is M. K. Stalin (DMK), in office since May 2021.\n"
     "   - Maharashtra: Chief Minister is Devendra Fadnavis (BJP / Mahayuti), in office since December 2024.\n"
@@ -61,8 +62,10 @@ SYSTEM_PROMPT = (
     "Total Capital ratio (>= 8.0%), and the Basel III Leverage Ratio (Tier 1 Capital / Total Leverage Exposure >= 3.0%).\n"
     "2. ACCOUNTING DEFINITIONS & ADJUSTED EBITDA:\n"
     "   - EBITDA is Earnings BEFORE Interest, Taxes, Depreciation, and Amortization. Interest expense NEVER alters or reduces EBITDA.\n"
-    "   - If reported unadjusted EBITDA is already provided in the filing, DO NOT re-add Interest Expense, Taxes, or D&A to that EBITDA "
-    "(that is a double-count, because reported EBITDA already excludes them). Only add back permitted adjustments (e.g., non-recurring restructuring charges up to their allowable caps).\n"
+    "   - CRITICAL DOUBLE-COUNT GUARD: When a Credit Agreement provides 'Reported EBITDA' or 'Unadjusted EBITDA', that figure ALREADY adds back "
+    "Interest Expense, Income Taxes, and D&A. DO NOT add Interest, Taxes, or D&A to Reported EBITDA (that is a critical double-count error). "
+    "To calculate Consolidated Adjusted EBITDA from Reported EBITDA, ONLY add permissible adjustments (such as restructuring charges subject to their percentage cap).\n"
+    "   - Formula: Consolidated Adjusted EBITDA = Reported Unadjusted EBITDA + Permissible Capped Add-backs.\n"
     "3. VALUATION & RESTRUCTURING WATERFALLS:\n"
     "   - Equity Value = Implied EV - Net Debt - Minority Interest - Pension Deficit + Equity Investments in Affiliates.\n"
     "   - Net Debt = Total Gross Debt - Unrestricted Cash (exclude restricted collateral cash per covenant terms).\n"
@@ -230,7 +233,7 @@ def sanitize_report_formatting(text: str) -> str:
     cleaned = re.sub(r'\$\s*([0-9])', r'USD \1', cleaned)
 
     # Clean out any hallucinated user dialogue turns that leaked at the end
-    cleaned = re.sub(r'\n+(?:USER|Human):\s*[\s\S]*$', '', cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r'\n+(?:USER|Human|User):\s*[\s\S]*$', '', cleaned)
 
     if not cleaned.strip():
         return text.strip()
@@ -291,12 +294,11 @@ def create_completion_with_fallback(client: Groq, preferred_model: str = None, s
     global CACHED_WORKING_MODEL
     active_model = preferred_model or get_best_available_model(client)
 
-    # 2000 tokens for institutional completeness; zero penalties to avoid premature end; strict stop tokens to prevent user self-chat
-    kwargs["max_tokens"] = kwargs.get("max_tokens", 2000)
-    kwargs["temperature"] = kwargs.get("temperature", 0.1)
+    # 2500 tokens for institutional depth; Zero out penalties to prevent token-suppression truncation
+    kwargs["max_tokens"] = 2500
+    kwargs["temperature"] = 0.1
     kwargs["frequency_penalty"] = 0.0
     kwargs["presence_penalty"] = 0.0
-    kwargs["stop"] = ["\nUSER:", "\nUser:", "\nHuman:"]
     kwargs["model"] = active_model
 
     try:
@@ -304,7 +306,7 @@ def create_completion_with_fallback(client: Groq, preferred_model: str = None, s
     except Exception as e:
         err_str = str(e).lower()
         if any(term in err_str for term in ["output tokens per minute", "otpm", "reduce max_tokens", "rate_limit_exceeded"]):
-            kwargs["max_tokens"] = 1000
+            kwargs["max_tokens"] = 1200
             alt_model = "llama-3.1-8b-instant" if active_model != "llama-3.1-8b-instant" else "llama-3.3-70b-versatile"
             kwargs["model"] = alt_model
             if status_callback:
@@ -326,6 +328,7 @@ def build_contextual_messages(user_input: str, system_prompt: str) -> list[dict]
     vault_context = []
     try:
         import streamlit as st
+        # 1. Recover vault memories across resets
         if "session_vault" in st.session_state and isinstance(st.session_state.session_vault, list):
             for s_idx, session_turns in enumerate(st.session_state.session_vault[-3:]):
                 summary_lines = []
@@ -336,15 +339,18 @@ def build_contextual_messages(user_input: str, system_prompt: str) -> list[dict]
                 if summary_lines:
                     vault_context.append(f"[ARCHIVED RUN #{s_idx + 1}]:\n" + "\n".join(summary_lines))
 
+        # 2. Recover active messages while filtering out previous refusal boilerplate and script tags
         if "messages" in st.session_state and isinstance(st.session_state.messages, list):
             stored = st.session_state.messages
             candidates = stored[:-1] if (stored and stored[-1].get("role") == "user") else stored
             for m in candidates[-4:]:
                 role = m.get("role", "user")
                 content = str(m.get("content", "")).strip()
-                # Purge prior refusal boilerplate so the agent doesn't mimic its own previous canned responses
+                # Purge prior refusal boilerplate and script tags
                 if "please provide the relevant sections" in content.lower():
                     continue
+                # Strip any hallucinated USER dialog turns that were stored in assistant history
+                content = re.sub(r'\n+(?:USER|Human|User):\s*[\s\S]*$', '', content)
                 if role in ["user", "assistant"] and content:
                     history.append({"role": role, "content": content})
     except Exception:
@@ -493,7 +499,7 @@ def run_analyst_agent(
             f"\"\"\"\n{pdf_text}\n\"\"\"\n\n"
             f"CRITICAL DIRECTIVE: The user's query pertains directly to the document above. Perform all quantitative "
             f"calculations, covenant compliance tests, and balance sheet waterfalls DIRECTLY and FULLY using the "
-            f"exact numbers, sections, and definitions in this filing. Answer all parts systematically. Show complete arithmetic without truncating.\n\n"
+            f"exact numbers, sections, and definitions in this filing. Answer all three parts systematically. Show step-by-step arithmetic without truncating.\n\n"
         )
     elif any(k in user_input.lower() for k in ["attached", "credit agreement", "indenture", "filing"]):
         return (
@@ -506,7 +512,8 @@ def run_analyst_agent(
     # 2. Extract live market exchange data if requested
     context_data = extract_and_fetch_live_data(user_input, status_callback=status_callback)
 
-    augmented_prompt = f"{pdf_context}{user_input}\n\n{context_data}".strip()
+    clean_user_prompt = user_input.strip()
+    augmented_prompt = f"{pdf_context}DIRECTIVE:\n{clean_user_prompt}\n\n{context_data}".strip()
 
     try:
         messages = build_contextual_messages(augmented_prompt, SYSTEM_PROMPT)
@@ -515,7 +522,7 @@ def run_analyst_agent(
             preferred_model=selected_model,
             status_callback=status_callback,
             messages=messages,
-            max_tokens=2000
+            max_tokens=2500
         )
         final_text = resp.choices[0].message.content or ""
         elapsed = time.perf_counter() - start_time
