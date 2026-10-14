@@ -41,13 +41,13 @@ SYSTEM_PROMPT = (
     "CRITICAL CONVERSATION & MEMORY VAULT PROTOCOL:\n"
     "1. DOCUMENT-FIRST QUANTITATIVE RIGOR: When institutional filing content is provided under [OFFICIAL FINANCIAL FILING DOCUMENT ATTACHED], "
     "perform all quantitative calculations, covenant compliance tests, and balance sheet waterfalls DIRECTLY and FULLY using the "
-    "exact numbers, sections, and definitions in that filing text. Answer all parts systematically. Show step-by-step arithmetic.\n"
+    "exact numbers, sections, and definitions in that filing text. Answer all requested questions systematically with step-by-step arithmetic.\n"
     "2. MULTI-TURN CONTINUITY ACROSS SESSIONS: Review ALL conversation turns and archived session history in your prompt. "
     "When a user asks to 're-run', 'sensitize', or 'modify' a previous calculation, retain ALL baseline parameters (EBITDA, purchase price, "
     "equity check, debt balances) from the prior prompt or session archive and ONLY adjust the requested variable.\n"
     "3. NO BRACKET TAGS OR ECHOING: NEVER output bracketed headers (e.g., [ORYN REPORT]). Begin directly with the analysis.\n"
     "4. NO CHATBOT HEDGING: Eliminate conversational filler (e.g., 'Based on the available information'). Deliver crisp intelligence.\n"
-    "5. CLEAN FORMATTING: Use bold markdown text for formulas. Never output raw brackets like '[ \\text{...} ]'.\n"
+    "5. CLEAN MARKDOWN FORMATTING: When presenting calculations or schedules, use clear bullet points or standard markdown tables with clean newlines between every row.\n"
     "6. REAL-WORLD INCUMBENCY (STRICT ADHERENCE):\n"
     "   - Tamil Nadu: Chief Minister is M. K. Stalin (DMK), in office since May 2021.\n"
     "   - Maharashtra: Chief Minister is Devendra Fadnavis (BJP / Mahayuti), in office since December 2024.\n"
@@ -59,11 +59,13 @@ SYSTEM_PROMPT = (
     "   - Regulated commercial banks DO NOT have 'Debt-to-EBITDA' covenants. Deposits and debt are funding liabilities, not corporate debt.\n"
     "   - Banks are governed by Basel III Regulatory Capital Requirements: CET1 ratio (>= 4.5%), Tier 1 ratio (>= 6.0%), "
     "Total Capital ratio (>= 8.0%), and the Basel III Leverage Ratio (Tier 1 Capital / Total Leverage Exposure >= 3.0%).\n"
-    "2. ACCOUNTING DEFINITIONS:\n"
+    "2. ACCOUNTING DEFINITIONS & ADJUSTED EBITDA:\n"
     "   - EBITDA is Earnings BEFORE Interest, Taxes, Depreciation, and Amortization. Interest expense NEVER alters or reduces EBITDA.\n"
+    "   - If reported unadjusted EBITDA is already provided in the filing, DO NOT re-add Interest Expense, Taxes, or D&A to that EBITDA "
+    "(that is a double-count, because reported EBITDA already excludes them). Only add back permitted adjustments (e.g., non-recurring restructuring charges up to their allowable caps).\n"
     "3. VALUATION & RESTRUCTURING WATERFALLS:\n"
     "   - Equity Value = Implied EV - Net Debt - Minority Interest - Pension Deficit + Equity Investments in Affiliates.\n"
-    "   - Net Debt = Total Gross Debt - Unrestricted Cash (exclude restricted cash).\n"
+    "   - Net Debt = Total Gross Debt - Unrestricted Cash (exclude restricted collateral cash per covenant terms).\n"
     "   - Chapter 11 priority: DIP -> First Lien -> Second Lien -> Senior Unsecured -> Subordinated. Fulcrum security is partially impaired.\n"
     "   - Treasury Stock Method (TSM): Proceeds = Options * Strike Price; Repurchased Shares = Proceeds / Share Price; "
     "Net Dilutive Shares = Options - Repurchased; Fully Diluted = Basic + Net Dilutive.\n"
@@ -226,7 +228,6 @@ def sanitize_report_formatting(text: str) -> str:
     cleaned = re.sub(r'\n```\s*$', '', cleaned.strip())
     cleaned = re.sub(r'^\[(?:ORYN REPORT\vert{}REPORT\vert{}ANALYSIS\vert{}QUANTITATIVE ANALYSIS)\]:?\s*', '', cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r'\$\s*([0-9])', r'USD \1', cleaned)
-    cleaned = re.sub(r'\|\s*\|', '|\n|', cleaned)
 
     if not cleaned.strip():
         return text.strip()
@@ -287,8 +288,8 @@ def create_completion_with_fallback(client: Groq, preferred_model: str = None, s
     global CACHED_WORKING_MODEL
     active_model = preferred_model or get_best_available_model(client)
 
-    # 1500 tokens for institutional depth; Zero out penalties to prevent token-suppression truncation
-    kwargs["max_tokens"] = kwargs.get("max_tokens", 1500)
+    # Expanded 2,000 token budget for complete multi-part calculations; zero penalties to prevent premature stop
+    kwargs["max_tokens"] = kwargs.get("max_tokens", 2000)
     kwargs["temperature"] = kwargs.get("temperature", 0.1)
     kwargs["frequency_penalty"] = 0.0
     kwargs["presence_penalty"] = 0.0
@@ -299,7 +300,7 @@ def create_completion_with_fallback(client: Groq, preferred_model: str = None, s
     except Exception as e:
         err_str = str(e).lower()
         if any(term in err_str for term in ["output tokens per minute", "otpm", "reduce max_tokens", "rate_limit_exceeded"]):
-            kwargs["max_tokens"] = 850
+            kwargs["max_tokens"] = 1000
             alt_model = "llama-3.1-8b-instant" if active_model != "llama-3.1-8b-instant" else "llama-3.3-70b-versatile"
             kwargs["model"] = alt_model
             if status_callback:
@@ -321,6 +322,7 @@ def build_contextual_messages(user_input: str, system_prompt: str) -> list[dict]
     vault_context = []
     try:
         import streamlit as st
+        # 1. Recover vault memories across resets
         if "session_vault" in st.session_state and isinstance(st.session_state.session_vault, list):
             for s_idx, session_turns in enumerate(st.session_state.session_vault[-3:]):
                 summary_lines = []
@@ -331,12 +333,16 @@ def build_contextual_messages(user_input: str, system_prompt: str) -> list[dict]
                 if summary_lines:
                     vault_context.append(f"[ARCHIVED RUN #{s_idx + 1}]:\n" + "\n".join(summary_lines))
 
+        # 2. Recover active messages while filtering out previous refusal responses
         if "messages" in st.session_state and isinstance(st.session_state.messages, list):
             stored = st.session_state.messages
             candidates = stored[:-1] if (stored and stored[-1].get("role") == "user") else stored
             for m in candidates[-4:]:
                 role = m.get("role", "user")
                 content = str(m.get("content", "")).strip()
+                # Strip previous refusal loops so model does not replicate its own boilerplate
+                if "please provide the relevant sections" in content.lower():
+                    continue
                 if role in ["user", "assistant"] and content:
                     history.append({"role": role, "content": content})
     except Exception:
@@ -469,14 +475,11 @@ def run_analyst_agent(
         if pdf_text.startswith("⚠️"):
             return pdf_text, None, None, time.perf_counter() - start_time
 
-        # Fail-safe content check: Stop hallucination if an empty/near-empty PDF was uploaded
         if c_count < 100:
             doc_name = uploaded_pdf.get("name", "Document") if isinstance(uploaded_pdf, dict) else "Document"
             err_msg = (
-                f"⚠️ **Incomplete / Empty Filing Attached**: The attached file (`{doc_name}`) contains only {c_count} characters:\n"
-                f"> *\"{pdf_text[:120]}\"*\n\n"
-                f"It does not contain the required credit agreement covenants or balance sheet numbers. "
-                f"Please ensure you attach a PDF containing the actual agreement text, or click **'⚡ Load Apex Credit Agreement'** in the `➕` drawer."
+                f"⚠️ **Incomplete Filing Attached**: The attached file (`{doc_name}`) contains only {c_count} characters.\n"
+                f"Please attach a PDF with selectable text or use the 1-click benchmark in the `➕` drawer."
             )
             return err_msg, None, None, time.perf_counter() - start_time
 
@@ -488,7 +491,7 @@ def run_analyst_agent(
             f"\"\"\"\n{pdf_text}\n\"\"\"\n\n"
             f"CRITICAL DIRECTIVE: The user's query pertains directly to the document above. Perform all quantitative "
             f"calculations, covenant compliance tests, and balance sheet waterfalls DIRECTLY and FULLY using the "
-            f"exact numbers, sections, and definitions in this filing. Answer all three parts systematically. Show step-by-step arithmetic. Do not truncate.\n\n"
+            f"exact numbers, sections, and definitions in this filing. Answer all parts systematically. Show complete arithmetic without truncating.\n\n"
         )
     elif any(k in user_input.lower() for k in ["attached", "credit agreement", "indenture", "filing"]):
         return (
@@ -510,7 +513,7 @@ def run_analyst_agent(
             preferred_model=selected_model,
             status_callback=status_callback,
             messages=messages,
-            max_tokens=1500
+            max_tokens=2000
         )
         final_text = resp.choices[0].message.content or ""
         elapsed = time.perf_counter() - start_time
