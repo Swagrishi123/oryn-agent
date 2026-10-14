@@ -12,7 +12,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS: Docks and centers the Gemini '+' button directly INSIDE the typing bar
+# Custom CSS: Floating typing bar, soft shadow send/attach buttons, and Gemini-style docking
 st.markdown(
     """
     <style>
@@ -20,17 +20,54 @@ st.markdown(
     div[data-testid="stBottom"] > div,
     div[data-testid="stBottomBlockContainer"] {
         position: relative !important;
+        background-color: transparent !important;
     }
 
-    /* Indent chat textarea so placeholder and typing start neatly after the '+' button */
+    /* Floating typing pill: sleek rounded border and soft ambient shadow */
+    div[data-testid="stChatInput"] {
+        border-radius: 28px !important;
+        background-color: #ffffff !important;
+        border: 1px solid #e9d5ff !important;
+        box-shadow: 0 4px 20px rgba(74, 20, 140, 0.08), 0 2px 6px rgba(0, 0, 0, 0.04) !important;
+        transition: box-shadow 0.25s ease, border-color 0.25s ease !important;
+    }
+
+    div[data-testid="stChatInput"]:focus-within {
+        border-color: #a855f7 !important;
+        box-shadow: 0 6px 26px rgba(74, 20, 140, 0.14), 0 2px 8px rgba(0, 0, 0, 0.06) !important;
+    }
+
+    /* Indent chat textarea so text starts neatly after the '+' button */
     div[data-testid="stChatInput"] textarea {
         padding-left: 56px !important;
+        font-size: 14.5px !important;
     }
 
-    /* Position the '+' button directly inside the left curve of the chat pill */
+    /* Floating Send Button: Soft elevation and purple tint */
+    div[data-testid="stChatInput"] button {
+        border-radius: 50% !important;
+        width: 32px !important;
+        height: 32px !important;
+        min-height: 32px !important;
+        background-color: #faf5ff !important;
+        color: #4a148c !important;
+        border: 1px solid #d8b4fe !important;
+        box-shadow: 0 2px 6px rgba(74, 20, 140, 0.18) !important;
+        transition: transform 0.18s ease, box-shadow 0.18s ease, background-color 0.18s ease !important;
+    }
+
+    div[data-testid="stChatInput"] button:hover {
+        background-color: #4a148c !important;
+        color: #ffffff !important;
+        border-color: #4a148c !important;
+        transform: scale(1.06) !important;
+        box-shadow: 0 4px 12px rgba(74, 20, 140, 0.28) !important;
+    }
+
+    /* Position the '+' button directly inside the left curve of the typing pill */
     .gemini-attach-wrapper {
         position: absolute !important;
-        bottom: 24px !important;
+        bottom: 50px !important;
         left: 14px !important;
         z-index: 99999 !important;
         width: 32px !important;
@@ -45,14 +82,14 @@ st.markdown(
         padding: 0 !important;
     }
 
-    /* Style the '+' button: circular, borderless hover, centered icon */
+    /* Floating Attach '+' Button */
     .gemini-attach-wrapper div[data-testid="stButton"] > button {
         border-radius: 50% !important;
         width: 32px !important;
         height: 32px !important;
         min-height: 32px !important;
         max-height: 32px !important;
-        border: 1px solid #c084fc !important;
+        border: 1px solid #d8b4fe !important;
         background-color: #faf5ff !important;
         color: #4a148c !important;
         font-size: 18px !important;
@@ -63,14 +100,16 @@ st.markdown(
         justify-content: center !important;
         padding: 0 !important;
         margin: 0 !important;
-        transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.2s !important;
-        box-shadow: 0 1px 3px rgba(74, 20, 140, 0.12) !important;
+        box-shadow: 0 2px 6px rgba(74, 20, 140, 0.16) !important;
+        transition: transform 0.22s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.2s, box-shadow 0.2s !important;
     }
 
     .gemini-attach-wrapper div[data-testid="stButton"] > button:hover {
         background-color: #ede9fe !important;
         border-color: #7b1fa2 !important;
         color: #3b0764 !important;
+        transform: scale(1.06) !important;
+        box-shadow: 0 4px 10px rgba(74, 20, 140, 0.24) !important;
     }
 
     /* Rotate into an 'X' when the drawer is open */
@@ -88,7 +127,17 @@ st.markdown(
         border-radius: 12px;
         padding: 12px 16px;
         margin-bottom: 8px;
-        box-shadow: 0 4px 12px rgba(74, 20, 140, 0.08);
+        box-shadow: 0 4px 16px rgba(74, 20, 140, 0.08);
+    }
+
+    /* Disclaimer Label */
+    .oryn-disclaimer {
+        text-align: center;
+        margin-top: 6px;
+        margin-bottom: 2px;
+        font-size: 11.5px;
+        color: #8e8ea0;
+        letter-spacing: 0.15px;
     }
     </style>
     """,
@@ -240,6 +289,16 @@ with bottom_area:
 
     # 4. Bottom Chat Input
     user_prompt = st.chat_input("Enter institutional query, model schedule, or analysis directive...")
+
+    # 5. Professional AI Disclaimer
+    st.markdown(
+        """
+        <div class="oryn-disclaimer">
+            ORYN is an AI and can make mistakes. Verify critical financial, regulatory, and corporate data.
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
 
 # ==========================================
 # AGENT EXECUTION
