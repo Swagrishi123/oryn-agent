@@ -41,7 +41,7 @@ SYSTEM_PROMPT = (
     "CRITICAL CONVERSATION & MEMORY VAULT PROTOCOL:\n"
     "1. DOCUMENT-FIRST QUANTITATIVE RIGOR: When institutional filing content is provided under [OFFICIAL FINANCIAL FILING DOCUMENT ATTACHED], "
     "perform all quantitative calculations, covenant compliance tests, and balance sheet waterfalls DIRECTLY and FULLY using the "
-    "exact numbers, sections, and definitions in that filing text. Answer all requested questions systematically with step-by-step arithmetic.\n"
+    "exact numbers, sections, and definitions in that filing text. Show step-by-step arithmetic for all parts. Never hallucinate user dialogue.\n"
     "2. MULTI-TURN CONTINUITY ACROSS SESSIONS: Review ALL conversation turns and archived session history in your prompt. "
     "When a user asks to 're-run', 'sensitize', or 'modify' a previous calculation, retain ALL baseline parameters (EBITDA, purchase price, "
     "equity check, debt balances) from the prior prompt or session archive and ONLY adjust the requested variable.\n"
@@ -220,7 +220,7 @@ def extract_and_fetch_live_data(prompt: str, status_callback=None) -> str:
     return "\n\n" + "\n\n".join(injected_context) + "\n\n" if injected_context else ""
 
 def sanitize_report_formatting(text: str) -> str:
-    """Cleans up markdown formatting, unescapes code wrappers, and preserves output completeness."""
+    """Cleans up markdown formatting, unescapes code wrappers, and guarantees complete returns."""
     if not text or not text.strip():
         return "No analysis generated. Please check your query or filing input."
 
@@ -228,6 +228,9 @@ def sanitize_report_formatting(text: str) -> str:
     cleaned = re.sub(r'\n```\s*$', '', cleaned.strip())
     cleaned = re.sub(r'^\[(?:ORYN REPORT\vert{}REPORT\vert{}ANALYSIS\vert{}QUANTITATIVE ANALYSIS)\]:?\s*', '', cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r'\$\s*([0-9])', r'USD \1', cleaned)
+
+    # Clean out any hallucinated user dialogue turns that leaked at the end
+    cleaned = re.sub(r'\n+(?:USER|Human):\s*[\s\S]*$', '', cleaned, flags=re.IGNORECASE)
 
     if not cleaned.strip():
         return text.strip()
@@ -288,11 +291,12 @@ def create_completion_with_fallback(client: Groq, preferred_model: str = None, s
     global CACHED_WORKING_MODEL
     active_model = preferred_model or get_best_available_model(client)
 
-    # Expanded 2,000 token budget for complete multi-part calculations; zero penalties to prevent premature stop
+    # 2000 tokens for institutional completeness; zero penalties to avoid premature end; strict stop tokens to prevent user self-chat
     kwargs["max_tokens"] = kwargs.get("max_tokens", 2000)
     kwargs["temperature"] = kwargs.get("temperature", 0.1)
     kwargs["frequency_penalty"] = 0.0
     kwargs["presence_penalty"] = 0.0
+    kwargs["stop"] = ["\nUSER:", "\nUser:", "\nHuman:"]
     kwargs["model"] = active_model
 
     try:
@@ -322,7 +326,6 @@ def build_contextual_messages(user_input: str, system_prompt: str) -> list[dict]
     vault_context = []
     try:
         import streamlit as st
-        # 1. Recover vault memories across resets
         if "session_vault" in st.session_state and isinstance(st.session_state.session_vault, list):
             for s_idx, session_turns in enumerate(st.session_state.session_vault[-3:]):
                 summary_lines = []
@@ -333,14 +336,13 @@ def build_contextual_messages(user_input: str, system_prompt: str) -> list[dict]
                 if summary_lines:
                     vault_context.append(f"[ARCHIVED RUN #{s_idx + 1}]:\n" + "\n".join(summary_lines))
 
-        # 2. Recover active messages while filtering out previous refusal responses
         if "messages" in st.session_state and isinstance(st.session_state.messages, list):
             stored = st.session_state.messages
             candidates = stored[:-1] if (stored and stored[-1].get("role") == "user") else stored
             for m in candidates[-4:]:
                 role = m.get("role", "user")
                 content = str(m.get("content", "")).strip()
-                # Strip previous refusal loops so model does not replicate its own boilerplate
+                # Purge prior refusal boilerplate so the agent doesn't mimic its own previous canned responses
                 if "please provide the relevant sections" in content.lower():
                     continue
                 if role in ["user", "assistant"] and content:
@@ -504,7 +506,7 @@ def run_analyst_agent(
     # 2. Extract live market exchange data if requested
     context_data = extract_and_fetch_live_data(user_input, status_callback=status_callback)
 
-    augmented_prompt = f"{pdf_context}USER DIRECTIVE:\n{user_input}\n\n{context_data}".strip()
+    augmented_prompt = f"{pdf_context}{user_input}\n\n{context_data}".strip()
 
     try:
         messages = build_contextual_messages(augmented_prompt, SYSTEM_PROMPT)
