@@ -1,8 +1,9 @@
 streamlit
 groq
-yfinance
-requests
+pypdf
+openpyxl
 pandas
 numpy
 matplotlib
-openpyxl
+requests
+yfinance
