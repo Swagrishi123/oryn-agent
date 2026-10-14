@@ -3,9 +3,10 @@ base = "light"
 primaryColor = "#4a148c"
 backgroundColor = "#ffffff"
 secondaryBackgroundColor = "#faf5ff"
-textColor = "#4a148c"
+textColor = "#1f2937"
 
 [server]
 headless = true
 enableCORS = false
 enableXsrfProtection = false
+maxUploadSize = 200
