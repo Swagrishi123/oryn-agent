@@ -47,7 +47,7 @@ INSTITUTIONAL_BENCHMARKS = {
 }
 
 def parse_large_pdf(uploaded_file, query: str = "", max_context_chars: int = 25000) -> str:
-    """Institutional PDF Parser: Reliably extracts text from uploaded PDF streams up to 200MB."""
+    """Institutional PDF Parser: Reliably extracts text from raw bytes or streams up to 200MB."""
     try:
         from pypdf import PdfReader
     except ImportError:
@@ -57,15 +57,23 @@ def parse_large_pdf(uploaded_file, query: str = "", max_context_chars: int = 250
             return "⚠️ [PDF Error]: Neither 'pypdf' nor 'PyPDF2' is installed in the environment."
 
     try:
-        # Guarantee reading from byte 0 regardless of Streamlit stream state
-        if hasattr(uploaded_file, "getvalue"):
-            file_stream = io.BytesIO(uploaded_file.getvalue())
-        elif hasattr(uploaded_file, "seek"):
+        # Extract raw byte buffer whether passed as dict, bytes, or file stream
+        if isinstance(uploaded_file, dict) and "data" in uploaded_file:
+            raw_bytes = uploaded_file["data"]
+        elif hasattr(uploaded_file, "getvalue"):
+            raw_bytes = uploaded_file.getvalue()
+        elif isinstance(uploaded_file, bytes):
+            raw_bytes = uploaded_file
+        elif hasattr(uploaded_file, "read"):
             uploaded_file.seek(0)
-            file_stream = uploaded_file
+            raw_bytes = uploaded_file.read()
         else:
-            file_stream = uploaded_file
+            return "⚠️ [PDF Error]: Invalid document payload format."
 
+        if not raw_bytes or len(raw_bytes) == 0:
+            return "⚠️ [PDF Error]: Document byte stream is empty."
+
+        file_stream = io.BytesIO(raw_bytes)
         reader = PdfReader(file_stream)
         total_pages = len(reader.pages)
         if total_pages == 0:
@@ -83,11 +91,11 @@ def parse_large_pdf(uploaded_file, query: str = "", max_context_chars: int = 250
         if not page_texts:
             return "⚠️ [PDF Error]: Document appears to be a scanned image with no selectable text."
 
-        # If document is short (<= 8 pages), provide all pages directly
+        # If document is short (<= 8 pages), provide full text directly
         if len(page_texts) <= 8:
             return "\n\n".join([f"--- [FILING EXCERPT - PAGE {p_num}] ---\n{p_txt}" for p_num, p_txt in page_texts])
 
-        # For long filings (10-K, 100+ pages), rank and slice by relevance
+        # For long filings (10-K, 100+ pages), rank and slice by query relevance
         if query and len(query.strip()) > 3:
             q_tokens = [w.lower() for w in re.findall(r'\b[a-zA-Z]{3,}\b', query) if w.lower() not in {"what", "show", "tell", "from", "with", "this"}]
             scored_pages = []
