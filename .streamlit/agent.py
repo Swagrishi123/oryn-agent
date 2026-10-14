@@ -26,7 +26,6 @@ except Exception:
     def parse_large_pdf(f, q=""):
         return None
 
-# Blacklist of macro, ALM, FIG, and restructuring terms to prevent false-positive ticker lookups
 FINANCIAL_ACRONYMS_BLACKLIST = {
     "NIM", "ALM", "TCE", "AFS", "FIG", "BPS", "DIP", "LBO", "WACC", "DCF",
     "EBITDA", "FCF", "APR", "EV", "PE", "IRR", "CAGR", "ROE", "ROA", "ROIC",
@@ -42,16 +41,15 @@ FINANCIAL_ACRONYMS_BLACKLIST = {
 SYSTEM_PROMPT = (
     "You are ORYN Analyst, an elite institutional BFSI quantitative analyst and corporate intelligence advisor.\n\n"
     "CRITICAL CONVERSATION & MEMORY VAULT PROTOCOL:\n"
-    "1. DOCUMENT-FIRST QUANTITATIVE RIGOR: When institutional filing content is provided in the prompt, perform all "
-    "calculations strictly using the definitions, covenants, numbers, and balance sheet schedules from that document. "
-    "NEVER invent placeholder formulas or hypothetical numbers.\n"
-    "2. MULTI-TURN CONTINUITY ACROSS SESSIONS: Review ALL conversation turns and archived session history in your prompt. "
+    "1. DOCUMENT-FIRST QUANTITATIVE RIGOR: When institutional filing content is provided under [OFFICIAL FINANCIAL FILING DOCUMENT ATTACHED], "
+    "perform all quantitative calculations, covenant compliance tests, and balance sheet waterfalls DIRECTLY and IMMEDIATELY using the "
+    "exact numbers, sections, and definitions in that filing text. Do not ask for further information or repeat instructions.\n"
+    "2. MULTI-TURN CONTINUITY ACROSS SESSIONS: Review ALL prior conversation turns and archived session history in the prompt. "
     "When a user asks to 're-run', 'sensitize', or 'modify' a previous calculation, retain ALL baseline parameters (EBITDA, purchase price, "
     "equity check, debt balances) from the prior prompt or session archive and ONLY adjust the requested variable.\n"
     "3. NO BRACKET TAGS OR ECHOING: NEVER output bracketed headers (e.g., [ORYN REPORT]). Begin directly with the analysis.\n"
     "4. NO CHATBOT HEDGING: Eliminate conversational filler (e.g., 'Based on the available information'). Deliver crisp intelligence.\n"
-    "5. REAL-WORLD INCUMBENCY & FACTS (STRICT ADHERENCE):\n"
-    "   - Report strictly verified, sworn-in officeholders. Never project future election campaigns as current incumbents.\n"
+    "5. REAL-WORLD INCUMBENCY (STRICT ADHERENCE):\n"
     "   - Tamil Nadu: Chief Minister is M. K. Stalin (DMK), in office since May 2021.\n"
     "   - Maharashtra: Chief Minister is Devendra Fadnavis (BJP / Mahayuti), in office since December 2024.\n"
     "   - SBI: Chairman is Challa Sreenivasulu Setty (C.S. Setty), appointed August 2024.\n"
@@ -62,8 +60,6 @@ SYSTEM_PROMPT = (
     "   - Regulated commercial banks DO NOT have 'Debt-to-EBITDA' covenants. Deposits and debt are funding liabilities, not corporate debt.\n"
     "   - Banks are governed by Basel III Regulatory Capital Requirements: CET1 ratio (>= 4.5%), Tier 1 ratio (>= 6.0%), "
     "Total Capital ratio (>= 8.0%), and the Basel III Leverage Ratio (Tier 1 Capital / Total Leverage Exposure >= 3.0%).\n"
-    "   - When answering general/conceptual questions without provided financial statements, provide the institutional regulatory "
-    "framework rather than inventing fictional case studies or numbers.\n"
     "2. ACCOUNTING DEFINITIONS:\n"
     "   - EBITDA is Earnings BEFORE Interest, Taxes, Depreciation, and Amortization. Interest expense NEVER alters or reduces EBITDA.\n"
     "3. VALUATION & RESTRUCTURING WATERFALLS:\n"
@@ -108,11 +104,7 @@ def extract_and_fetch_live_data(prompt: str, status_callback=None) -> str:
     injected_context = []
     p_lower = prompt.lower()
 
-    stock_keywords = [
-        "stock", "share", "shares", "price", "market cap", "valuation",
-        "52-week", "quote", "ticker", "trading at", "pe ratio", "dividend",
-        "rupees", "inr", "usd", "market price"
-    ]
+    stock_keywords = ["stock", "share", "shares", "price", "market cap", "valuation", "52-week", "quote", "ticker", "trading at", "pe ratio"]
     has_dollar_ticker = bool(re.search(r'\$[A-Za-z]{2,10}\b', prompt))
     is_stock_request = any(k in p_lower for k in stock_keywords) or has_dollar_ticker
 
@@ -122,18 +114,12 @@ def extract_and_fetch_live_data(prompt: str, status_callback=None) -> str:
         for name, sym in KNOWN_ENTITIES.items():
             if re.search(r'\b' + re.escape(name) + r'\b', p_lower):
                 found_tickers.add(sym)
-
-        dollar_tickers = re.findall(r'\$([A-Za-z]{2,10})\b', prompt)
-        for dt in dollar_tickers:
-            dt_clean = dt.upper()
-            if dt_clean not in FINANCIAL_ACRONYMS_BLACKLIST:
-                found_tickers.add(dt_clean)
-
-        raw_candidates = re.findall(r'\b[A-Z]{2,10}\b', prompt)
-        for c in raw_candidates:
+        for dt in re.findall(r'\$([A-Za-z]{2,10})\b', prompt):
+            if dt.upper() not in FINANCIAL_ACRONYMS_BLACKLIST:
+                found_tickers.add(dt.upper())
+        for c in re.findall(r'\b[A-Z]{2,10}\b', prompt):
             if c not in FINANCIAL_ACRONYMS_BLACKLIST:
                 found_tickers.add(c)
-
         target_tickers = list(found_tickers)[:4]
 
     if target_tickers:
@@ -149,21 +135,13 @@ def extract_and_fetch_live_data(prompt: str, status_callback=None) -> str:
                 low = data.get("52w_low", "N/A")
                 resolved = data.get("ticker_resolved", ticker)
                 cname = data.get("company_name", ticker)
-
                 if status_callback and price != "N/A":
                     status_callback("info", f"✅ {ticker} Live Price: {price} | Market Cap: {mcap}")
-
-                market_rows.append(
-                    f"- {cname} ({resolved}): Current Price = {price}, Market Cap = {mcap}, "
-                    f"52-Week High = {high}, 52-Week Low = {low}"
-                )
+                market_rows.append(f"- {cname} ({resolved}): Current Price = {price}, Market Cap = {mcap}, 52-Week High = {high}, 52-Week Low = {low}")
             except Exception:
                 continue
-
         if market_rows:
-            injected_context.append(
-                "[VERIFIED LIVE EXCHANGE DATA]:\n" + "\n".join(market_rows)
-            )
+            injected_context.append("[VERIFIED LIVE EXCHANGE DATA]:\n" + "\n".join(market_rows))
 
     is_pure_stock_quote = bool(target_tickers) and is_stock_request
     if not is_pure_stock_quote:
@@ -176,25 +154,18 @@ def extract_and_fetch_live_data(prompt: str, status_callback=None) -> str:
             "lbo", "moic", "irr", "sources and uses", "exit multiple", "credit agreement"
         ]
         is_pure_theory = any(w in p_lower for w in theory_bypass_terms)
-        
         if not is_pure_theory:
             if status_callback:
                 status_callback("info", "Autonomous research: retrieving verified records...")
             scraped_intel = dynamic_web_search(prompt)
             if scraped_intel:
-                injected_context.append(
-                    f"[VERIFIED RESEARCH RECORDS]:\n{scraped_intel}"
-                )
+                injected_context.append(f"[VERIFIED RESEARCH RECORDS]:\n{scraped_intel}")
 
-    if injected_context:
-        return "\n\n" + "\n\n".join(injected_context) + "\n\n"
-    return ""
+    return "\n\n" + "\n\n".join(injected_context) + "\n\n" if injected_context else ""
 
 def sanitize_report_formatting(text: str) -> str:
-    """Repairs tables, guarantees newlines between table rows, and purges leaked tags."""
     cleaned = re.sub(r'\[[A-Za-z0-9\s\-_\.]+\]:?\s*', '', text)
     cleaned = re.sub(r'```(?:python)?\s*[\s\S]*?```', '', cleaned)
-    
     filler_patterns = [
         r'(?i)^please provide the requested information[^\n]*\n?',
         r'(?i)based on the (?:available )?(?:information|data)[,\s]*',
@@ -203,7 +174,6 @@ def sanitize_report_formatting(text: str) -> str:
     ]
     for fp in filler_patterns:
         cleaned = re.sub(fp, '', cleaned)
-
     cleaned = re.sub(r'\|\s*\|', '|\n|', cleaned)
 
     lines = cleaned.split('\n')
@@ -222,7 +192,6 @@ def sanitize_report_formatting(text: str) -> str:
     for line in lines:
         stripped = line.strip()
         stripped = re.sub(r'^\d+[\.\)]\s*\|', '|', stripped)
-        
         if '|' in stripped:
             if not stripped.startswith('|'):
                 stripped = '| ' + stripped
@@ -245,17 +214,10 @@ def sanitize_report_formatting(text: str) -> str:
 
 def is_quantitative_model_request(prompt: str) -> bool:
     p = prompt.lower()
-    dcf_terms = [
-        "dcf", "discounted cash flow", "sensitivity matrix", 
-        "unlevered", "run a financial model", 
-        "build a financial model", "run a 5-year", "run a 10-year",
-        "export the financial model to excel"
-    ]
+    dcf_terms = ["dcf", "discounted cash flow", "sensitivity matrix", "unlevered", "run a financial model", "build a financial model", "run a 5-year", "run a 10-year", "export the financial model to excel"]
     if any(t in p for t in dcf_terms):
         return True
-    has_discount_metric = any(m in p for m in ["wacc", "discount rate", "terminal growth"])
-    has_financial_metric = any(m in p for m in ["ebitda margin", "revenue growth", "cash flow projection"])
-    return bool(has_discount_metric and has_financial_metric)
+    return bool(any(m in p for m in ["wacc", "discount rate", "terminal growth"]) and any(m in p for m in ["ebitda margin", "revenue growth", "cash flow projection"]))
 
 def resolve_api_key(api_key: str = "") -> str:
     if api_key and api_key.strip():
@@ -298,13 +260,11 @@ def get_best_available_model(client: Groq, exclude_model: str = None, force_refr
     if candidates:
         CACHED_WORKING_MODEL = candidates[0]
         return CACHED_WORKING_MODEL
-
     return "llama-3.3-70b-versatile"
 
 def create_completion_with_fallback(client: Groq, preferred_model: str = None, status_callback=None, **kwargs):
     global CACHED_WORKING_MODEL
     active_model = preferred_model or get_best_available_model(client)
-    
     kwargs["max_tokens"] = min(kwargs.get("max_tokens", 950), 950)
     kwargs["temperature"] = kwargs.get("temperature", 0.1)
     kwargs["frequency_penalty"] = 0.15
@@ -315,7 +275,6 @@ def create_completion_with_fallback(client: Groq, preferred_model: str = None, s
         return client.chat.completions.create(**kwargs)
     except Exception as e:
         err_str = str(e).lower()
-
         if any(term in err_str for term in ["output tokens per minute", "otpm", "reduce max_tokens", "rate_limit_exceeded"]):
             kwargs["max_tokens"] = 700
             alt_model = "llama-3.1-8b-instant" if active_model != "llama-3.1-8b-instant" else "llama-3.3-70b-versatile"
@@ -323,29 +282,23 @@ def create_completion_with_fallback(client: Groq, preferred_model: str = None, s
             if status_callback:
                 status_callback("info", f"Adjusting token quota (OTPM safeguard active)... retrying with {alt_model}.")
             return client.chat.completions.create(**kwargs)
-
         if any(term in err_str for term in ["404", "model_not_found", "decommissioned", "does not exist", "not have access"]):
             alt_model = get_best_available_model(client, exclude_model=active_model, force_refresh=True)
             kwargs["model"] = alt_model
             return client.chat.completions.create(**kwargs)
-
         if "429" in err_str:
-            delay_match = re.search(r'try again in ([0-9.]+)s', err_str)
-            sleep_sec = float(delay_match.group(1)) + 0.5 if delay_match else 2.5
-            time.sleep(sleep_sec)
+            time.sleep(2.0)
             alt_model = get_best_available_model(client, exclude_model=active_model, force_refresh=True)
             kwargs["model"] = alt_model
             return client.chat.completions.create(**kwargs)
         raise e
 
 def build_contextual_messages(user_input: str, system_prompt: str) -> list[dict]:
-    """Preserves multi-turn state across live turns AND across up to 3 session resets."""
     history = []
     vault_context = []
-
     try:
         import streamlit as st
-        # 1. Recover memory from session vault (persists across up to 3 resets)
+        # 1. Recover vault memories across resets
         if "session_vault" in st.session_state and isinstance(st.session_state.session_vault, list):
             for s_idx, session_turns in enumerate(st.session_state.session_vault[-3:]):
                 summary_lines = []
@@ -356,10 +309,11 @@ def build_contextual_messages(user_input: str, system_prompt: str) -> list[dict]
                 if summary_lines:
                     vault_context.append(f"[ARCHIVED RUN #{s_idx + 1}]:\n" + "\n".join(summary_lines))
 
-        # 2. Recover active messages from current screen
+        # 2. Recover active messages from current screen (excluding the current turn)
         if "messages" in st.session_state and isinstance(st.session_state.messages, list):
             stored = st.session_state.messages
-            candidates = [m for m in stored if m.get("content") != user_input]
+            # Strip the very last turn if it was already appended by the UI
+            candidates = stored[:-1] if (stored and stored[-1].get("role") == "user") else stored
             for m in candidates[-6:]:
                 role = m.get("role", "user")
                 content = str(m.get("content", "")).strip()
@@ -375,9 +329,7 @@ def build_contextual_messages(user_input: str, system_prompt: str) -> list[dict]
     return [{"role": "system", "content": prompt_with_vault}] + history + [{"role": "user", "content": user_input}]
 
 def parse_dcf_assumptions(prompt: str) -> dict:
-    """Parses dynamic DCF parameters from conversational input with fallback defaults."""
     p_lower = prompt.lower()
-    
     growth_match = re.search(r'(?:growing|growth rate|revenue growth|growth)[\s:]*(?:at\s*)?([0-9.]+)%', p_lower)
     growth = float(growth_match.group(1)) / 100.0 if growth_match else 0.20
 
@@ -385,7 +337,6 @@ def parse_dcf_assumptions(prompt: str) -> dict:
     m1 = re.search(r'([0-9.]+)\s*(?:m|million)?\s*(?:revenue\s+)?in\s+year[\s-]*1', p_lower)
     m2 = re.search(r'rev(?:enue)?[\s:]*(?:usd|\$)?\s*([0-9.]+)\s*(?:m|million)?\s+in\s+year[\s-]*1', p_lower)
     m3 = re.search(r'year[\s-]*1\s*rev(?:enue)?[\s:]*(?:usd|\$)?\s*([0-9.]+)', p_lower)
-
     if m1:
         y1_num = float(m1.group(1))
     elif m2:
@@ -397,14 +348,7 @@ def parse_dcf_assumptions(prompt: str) -> dict:
         base_revenue = y1_num / (1.0 + growth) if growth > -0.99 else y1_num
     else:
         m_gen = re.search(r'(?:revenue|rev)[\s:]*(?:usd|\$)?\s*([0-9.]+)', p_lower)
-        if m_gen:
-            val = float(m_gen.group(1))
-            if "start" in p_lower or "base" in p_lower:
-                base_revenue = val
-            else:
-                base_revenue = val / (1.0 + growth)
-        else:
-            base_revenue = 50.0
+        base_revenue = float(m_gen.group(1)) if m_gen else 50.0
 
     margin_match = re.search(r'(?:ebitda margin|margin|ebitda)[\s:]*(?:apparently\s*)?([0-9.]+)%', p_lower)
     margin = float(margin_match.group(1)) / 100.0 if margin_match else 0.25
@@ -415,35 +359,20 @@ def parse_dcf_assumptions(prompt: str) -> dict:
     tv_match = re.search(r'(?:terminal growth|terminal rate|perpetual growth)[\s:]*(?:apparently\s*)?([0-9.]+)%', p_lower)
     tv_rate = float(tv_match.group(1)) / 100.0 if tv_match else 0.025
 
-    return {
-        "base_revenue": base_revenue,
-        "growth": growth,
-        "margin": margin,
-        "wacc": wacc,
-        "tv_rate": tv_rate
-    }
+    return {"base_revenue": base_revenue, "growth": growth, "margin": margin, "wacc": wacc, "tv_rate": tv_rate}
 
 def generate_deterministic_dcf_artifacts(user_input: str) -> tuple[str, bytes | None, bytes | None]:
     params = parse_dcf_assumptions(user_input)
-    base_rev = params["base_revenue"]
-    growth = params["growth"]
-    margin = params["margin"]
-    wacc = params["wacc"]
-    tv_rate = params["tv_rate"]
+    base_rev, growth, margin, wacc, tv_rate = params["base_revenue"], params["growth"], params["margin"], params["wacc"], params["tv_rate"]
     years = 5
 
     if tv_rate >= wacc:
-        err_msg = (
-            f"⚠️ **DCF Model Exception**: Terminal growth rate ({tv_rate:.1%}) must be strictly less than "
-            f"WACC ({wacc:.1%}) to avoid a mathematical divergence in the Gordon Growth calculation."
-        )
-        return err_msg, None, None
+        return f"⚠️ **DCF Model Exception**: Terminal growth ({tv_rate:.1%}) must be strictly less than WACC ({wacc:.1%}).", None, None
 
     years_idx = list(range(1, years + 1))
     rev = [base_rev * ((1 + growth) ** t) for t in years_idx]
     ebitda = [r * margin for r in rev]
     df = [1 / ((1 + wacc) ** t) for t in years_idx]
-    
     pv_ufcf = [u * d for u, d in zip(ebitda, df)]
     sum_pv_ufcf = sum(pv_ufcf)
     tv = (ebitda[-1] * (1 + tv_rate)) / (wacc - tv_rate)
@@ -462,7 +391,6 @@ def generate_deterministic_dcf_artifacts(user_input: str) -> tuple[str, bytes | 
     ax.bar(['PV Cash Flows', 'PV Terminal Value'], [sum_pv_ufcf, pv_tv], color=['#4a148c', '#7b1fa2'], width=0.45)
     ax.set_title(f'Enterprise Value: USD {ev:.2f}M', fontsize=12, fontweight='bold')
     plt.tight_layout()
-    
     img_buf = io.BytesIO()
     plt.savefig(img_buf, format='png', dpi=200)
     plt.close('all')
@@ -519,10 +447,11 @@ def run_analyst_agent(
         pdf_text = parse_large_pdf(uploaded_pdf, query=user_input)
         if pdf_text and not pdf_text.startswith("⚠️"):
             pdf_context = (
-                f"\n\n[OFFICIAL FINANCIAL FILING DOCUMENT ATTACHED]:\n"
-                f"\"\"\"\n{pdf_text}\n\"\"\"\n"
-                f"CRITICAL DIRECTIVE: Perform all quantitative calculations, covenant compliance checks, and balance sheet reconciliations "
-                f"strictly using the numbers and definitions in the document above. Do NOT invent placeholder numbers.\n\n"
+                f"[OFFICIAL FINANCIAL FILING DOCUMENT ATTACHED]:\n"
+                f"\"\"\"\n{pdf_text}\n\"\"\"\n\n"
+                f"CRITICAL DIRECTIVE: The user's query pertains directly to the document above. Perform all quantitative "
+                f"calculations, covenant compliance tests, and balance sheet waterfalls DIRECTLY and IMMEDIATELY using the "
+                f"exact numbers, sections, and definitions in this filing. Do NOT ask for additional figures.\n\n"
             )
         elif pdf_text:
             pdf_context = f"\n\n{pdf_text}\n\n"
@@ -530,8 +459,7 @@ def run_analyst_agent(
     # 2. Extract live market exchange data if requested
     context_data = extract_and_fetch_live_data(user_input, status_callback=status_callback)
 
-    # Document context is placed first so the LLM grounds its answers in the document
-    augmented_prompt = pdf_context + user_input + context_data
+    augmented_prompt = f"{pdf_context}USER DIRECTIVE:\n{user_input}\n\n{context_data}".strip()
 
     try:
         messages = build_contextual_messages(augmented_prompt, SYSTEM_PROMPT)
