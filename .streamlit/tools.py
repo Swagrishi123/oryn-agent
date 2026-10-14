@@ -46,8 +46,8 @@ INSTITUTIONAL_BENCHMARKS = {
     }
 }
 
-def parse_large_pdf(uploaded_file, query: str = "", max_context_chars: int = 15000) -> str:
-    """Institutional PDF Parser: Handles up to 200MB filings, extracting relevant sections."""
+def parse_large_pdf(uploaded_file, query: str = "", max_context_chars: int = 25000) -> str:
+    """Institutional PDF Parser: Reliably extracts text from uploaded PDF streams up to 200MB."""
     try:
         from pypdf import PdfReader
     except ImportError:
@@ -57,7 +57,16 @@ def parse_large_pdf(uploaded_file, query: str = "", max_context_chars: int = 150
             return "⚠️ [PDF Error]: Neither 'pypdf' nor 'PyPDF2' is installed in the environment."
 
     try:
-        reader = PdfReader(uploaded_file)
+        # Guarantee reading from byte 0 regardless of Streamlit stream state
+        if hasattr(uploaded_file, "getvalue"):
+            file_stream = io.BytesIO(uploaded_file.getvalue())
+        elif hasattr(uploaded_file, "seek"):
+            uploaded_file.seek(0)
+            file_stream = uploaded_file
+        else:
+            file_stream = uploaded_file
+
+        reader = PdfReader(file_stream)
         total_pages = len(reader.pages)
         if total_pages == 0:
             return "⚠️ [PDF Error]: Uploaded PDF document contains 0 pages."
@@ -74,7 +83,11 @@ def parse_large_pdf(uploaded_file, query: str = "", max_context_chars: int = 150
         if not page_texts:
             return "⚠️ [PDF Error]: Document appears to be a scanned image with no selectable text."
 
-        # If user asked a specific question, score pages based on keyword density
+        # If document is short (<= 8 pages), provide all pages directly
+        if len(page_texts) <= 8:
+            return "\n\n".join([f"--- [FILING EXCERPT - PAGE {p_num}] ---\n{p_txt}" for p_num, p_txt in page_texts])
+
+        # For long filings (10-K, 100+ pages), rank and slice by relevance
         if query and len(query.strip()) > 3:
             q_tokens = [w.lower() for w in re.findall(r'\b[a-zA-Z]{3,}\b', query) if w.lower() not in {"what", "show", "tell", "from", "with", "this"}]
             scored_pages = []
@@ -92,7 +105,6 @@ def parse_large_pdf(uploaded_file, query: str = "", max_context_chars: int = 150
                 curr_len += len(p_txt)
             return "\n\n".join(selected)
 
-        # Baseline: Extract opening overview & executive summary
         combined = []
         curr_len = 0
         for p_num, p_txt in page_texts[:15]:
@@ -121,10 +133,8 @@ def extract_core_entity(query: str) -> str:
     return clean if len(clean) >= 2 else query.strip()
 
 def fetch_wikipedia_entity_summary(entity: str) -> str | None:
-    """Queries Wikipedia Action API for verified incumbency and encyclopedic records."""
     headers = {"User-Agent": "ORYNAnalyst/2.0 (Institutional BFSI Research; contact@oryn.ai)"}
     encoded_search = urllib.parse.quote_plus(entity)
-    
     try:
         url = (
             f"https://en.wikipedia.org/w/api.php?action=query&prop=extracts"
@@ -144,38 +154,9 @@ def fetch_wikipedia_entity_summary(entity: str) -> str | None:
                         return f"• [Official Encyclopedia Record - {title}]: {summary}"
     except Exception:
         pass
-
-    try:
-        search_url = f"https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch={encoded_search}&utf8=&format=json&srlimit=1"
-        s_res = requests.get(search_url, headers=headers, timeout=3.0)
-        if s_res.status_code == 200:
-            results = s_res.json().get("query", {}).get("search", [])
-            if results:
-                found_title = results[0].get("title", "")
-                if found_title:
-                    encoded_title = urllib.parse.quote_plus(found_title)
-                    sub_url = (
-                        f"https://en.wikipedia.org/w/api.php?action=query&prop=extracts"
-                        f"&exintro=true&explaintext=true&titles={encoded_title}&redirects=1&format=json"
-                    )
-                    sub_res = requests.get(sub_url, headers=headers, timeout=3.0)
-                    if sub_res.status_code == 200:
-                        sub_pages = sub_res.json().get("query", {}).get("pages", {})
-                        for pid, pdata in sub_pages.items():
-                            if pid != "-1":
-                                sub_extract = pdata.get("extract", "").strip()
-                                if sub_extract and len(sub_extract) > 30:
-                                    summary = ". ".join(sub_extract.split(". ")[:4]).strip()
-                                    if not summary.endswith("."):
-                                        summary += "."
-                                    return f"• [Official Encyclopedia Record - {found_title}]: {summary}"
-    except Exception:
-        pass
-
     return None
 
 def fetch_google_news_rss(query: str, max_items: int = 3) -> str | None:
-    """Queries news RSS syndication feeds, filtering out speculation and campaign buzz."""
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0 Safari/537.36"}
     encoded_q = urllib.parse.quote_plus(query.strip())
     rss_url = f"https://news.google.com/rss/search?q={encoded_q}&hl=en-IN&gl=IN&ceid=IN:en"
@@ -202,7 +183,6 @@ def fetch_google_news_rss(query: str, max_items: int = 3) -> str | None:
     return None
 
 def dynamic_web_search(query: str) -> str | None:
-    """Stratified retrieval: targets verified incumbency registries and official gazettes first."""
     clean_entity = extract_core_entity(query)
     findings = []
     p_lower = query.lower()
@@ -212,59 +192,43 @@ def dynamic_web_search(query: str) -> str | None:
     is_corporate = any(k in p_lower for k in ["chairman", "ceo", "md", "chief executive", "director", "head of", "head"])
 
     if is_cm:
-        cm_wiki = fetch_wikipedia_entity_summary(f"List of chief ministers of {clean_entity}")
-        if not cm_wiki:
-            cm_wiki = fetch_wikipedia_entity_summary(f"Chief Minister of {clean_entity}")
+        cm_wiki = fetch_wikipedia_entity_summary(f"List of chief ministers of {clean_entity}") or fetch_wikipedia_entity_summary(f"Chief Minister of {clean_entity}")
         if cm_wiki:
             findings.append(cm_wiki)
-
         pol_news = fetch_google_news_rss(f"\"{clean_entity}\" \"Chief Minister\" \"sworn in\" OR \"takes oath\"", max_items=2)
         if pol_news:
             findings.append(f"[OFFICIAL OATH & CABINET DISCLOSURES]:\n{pol_news}")
-
     elif is_governor:
-        gov_wiki = fetch_wikipedia_entity_summary(f"List of governors of {clean_entity}")
-        if not gov_wiki:
-            gov_wiki = fetch_wikipedia_entity_summary(f"Governor of {clean_entity}")
+        gov_wiki = fetch_wikipedia_entity_summary(f"List of governors of {clean_entity}") or fetch_wikipedia_entity_summary(f"Governor of {clean_entity}")
         if gov_wiki:
             findings.append(gov_wiki)
-
         gov_news = fetch_google_news_rss(f"\"{clean_entity}\" \"Governor\" \"sworn in\"", max_items=2)
         if gov_news:
             findings.append(f"[OFFICIAL OATH & CABINET DISCLOSURES]:\n{gov_news}")
-
     elif is_corporate:
         appointment_news = fetch_google_news_rss(f"{clean_entity} CEO OR MD OR Chairman appointed OR \"takes charge\"", max_items=3)
         if appointment_news:
             findings.append(f"[OFFICIAL APPOINTMENTS & GAZETTE RECORDS]:\n{appointment_news}")
-
         corp_wiki = fetch_wikipedia_entity_summary(clean_entity)
         if corp_wiki:
             findings.append(corp_wiki)
-
     else:
         news_intel = fetch_google_news_rss(f"{clean_entity} current", max_items=2)
         if news_intel:
             findings.append(f"[RECENT MEDIA HEADLINES]:\n{news_intel}")
-
         wiki_intel = fetch_wikipedia_entity_summary(clean_entity)
         if wiki_intel:
             findings.append(wiki_intel)
 
-    if findings:
-        return "\n\n".join(findings)
-    return None
+    return "\n\n".join(findings) if findings else None
 
 def fetch_yahoo_v8_chart(symbol: str) -> dict | None:
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-    }
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
     url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1d&range=1d"
     try:
         res = requests.get(url, headers=headers, timeout=2.5)
         if res.status_code == 200:
-            data = res.json()
-            meta = data.get("chart", {}).get("result", [{}])[0].get("meta", {})
+            meta = res.json().get("chart", {}).get("result", [{}])[0].get("meta", {})
             price = meta.get("regularMarketPrice") or meta.get("chartPreviousClose")
             if price:
                 high_52 = meta.get("fiftyTwoWeekHigh", "N/A")
@@ -283,9 +247,7 @@ def fetch_yahoo_v8_chart(symbol: str) -> dict | None:
     return None
 
 def fetch_google_finance_metrics(symbol: str) -> dict | None:
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-    }
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
     for exch in ["NSE", "BOM"]:
         url = f"https://www.google.com/finance/quote/{symbol}:{exch}"
         try:
@@ -318,45 +280,15 @@ def tool_get_financial_data(ticker: str) -> dict:
         if y_data:
             gf_data = fetch_google_finance_metrics(clean_sym)
             mcap = gf_data.get("market_cap") if gf_data else None
-            
-            if not mcap:
-                try:
-                    t = yf.Ticker(sym)
-                    raw_m = getattr(t.fast_info, "market_cap", None)
-                    if raw_m and raw_m > 0:
-                        if ".NS" in sym or ".BO" in sym:
-                            mcap = f"₹{raw_m / 1e7:,.0f} Cr"
-                        elif raw_m >= 1e12:
-                            mcap = f"${raw_m / 1e12:.2f}T"
-                        else:
-                            mcap = f"${raw_m / 1e9:.2f}B"
-                except Exception:
-                    pass
-
-            if not mcap and clean_sym in INSTITUTIONAL_BENCHMARKS:
-                mcap = INSTITUTIONAL_BENCHMARKS[clean_sym]["market_cap"]
-
             return {
                 "company_name": clean_sym,
                 "ticker_resolved": y_data["symbol"],
                 "current_price": y_data["price_formatted"],
-                "market_cap": mcap or "N/A",
+                "market_cap": mcap or (INSTITUTIONAL_BENCHMARKS.get(clean_sym, {}).get("market_cap", "N/A")),
                 "52w_high": y_data["high_52"],
                 "52w_low": y_data["low_52"],
                 "currency": y_data["currency"]
             }
-
-    gf = fetch_google_finance_metrics(clean_sym)
-    if gf:
-        return {
-            "company_name": clean_sym,
-            "ticker_resolved": gf["symbol"],
-            "current_price": gf["price_formatted"],
-            "market_cap": gf["market_cap"],
-            "52w_high": "N/A",
-            "52w_low": "N/A",
-            "currency": "INR"
-        }
 
     if clean_sym in INSTITUTIONAL_BENCHMARKS:
         return INSTITUTIONAL_BENCHMARKS[clean_sym]
