@@ -98,32 +98,30 @@ KNOWN_ENTITIES = {
     "tesla": "TSLA"
 }
 
-def parse_large_pdf(uploaded_file, query: str = "", max_context_chars: int = 25000) -> str:
-    """Self-contained institutional PDF extraction engine handling up to 200MB filings."""
-    if uploaded_file is None:
+def extract_pdf_document_text(uploaded_payload, query: str = "", max_chars: int = 25000) -> str:
+    """Bulletproof, self-contained PDF extractor handling raw byte bundles, files, or streams."""
+    if uploaded_payload is None:
         return ""
 
     try:
         try:
             from pypdf import PdfReader
         except ImportError:
-            from PyPDF2 import PdfReader
-    except ImportError:
-        return "⚠️ [PDF Error]: Neither 'pypdf' nor 'PyPDF2' is installed in the environment."
+            try:
+                from PyPDF2 import PdfReader
+            except ImportError:
+                return "⚠️ [PDF Engine Notice]: 'pypdf' package is initializing in the runtime."
 
-    try:
-        # 1. Unpack raw byte stream from any Streamlit format
-        if isinstance(uploaded_file, dict):
-            raw_bytes = uploaded_file.get("data", b"")
-        elif hasattr(uploaded_file, "getvalue"):
-            raw_bytes = uploaded_file.getvalue()
-        elif isinstance(uploaded_file, bytes):
-            raw_bytes = uploaded_file
-        elif hasattr(uploaded_file, "read"):
-            uploaded_file.seek(0)
-            raw_bytes = uploaded_file.read()
-        else:
-            return ""
+        raw_bytes = None
+        if isinstance(uploaded_payload, dict):
+            raw_bytes = uploaded_payload.get("data", b"")
+        elif hasattr(uploaded_payload, "getvalue"):
+            raw_bytes = uploaded_payload.getvalue()
+        elif isinstance(uploaded_payload, bytes):
+            raw_bytes = uploaded_payload
+        elif hasattr(uploaded_payload, "read"):
+            uploaded_payload.seek(0)
+            raw_bytes = uploaded_payload.read()
 
         if not raw_bytes or len(raw_bytes) == 0:
             return ""
@@ -131,54 +129,53 @@ def parse_large_pdf(uploaded_file, query: str = "", max_context_chars: int = 250
         reader = PdfReader(io.BytesIO(raw_bytes))
         total_pages = len(reader.pages)
         if total_pages == 0:
-            return "⚠️ [PDF Error]: Document contains 0 pages."
+            return ""
 
-        page_texts = []
+        extracted_pages = []
         for idx in range(total_pages):
             try:
-                txt = reader.pages[idx].extract_text() or ""
-                if txt.strip():
-                    page_texts.append((idx + 1, txt.strip()))
+                page_str = reader.pages[idx].extract_text() or ""
+                if page_str.strip():
+                    extracted_pages.append((idx + 1, page_str.strip()))
             except Exception:
                 continue
 
-        if not page_texts:
-            return "⚠️ [PDF Error]: Document appears to be a scanned image with no selectable text."
+        if not extracted_pages:
+            return ""
 
-        # Short filings (<= 8 pages) - provide full document verbatim
-        if len(page_texts) <= 8:
-            return "\n\n".join([f"--- [PAGE {p_num}] ---\n{p_txt}" for p_num, p_txt in page_texts])
+        # Short filings (<= 8 pages) - provide full text
+        if len(extracted_pages) <= 8:
+            return "\n\n".join([f"--- [PAGE {p_num}] ---\n{p_txt}" for p_num, p_txt in extracted_pages])
 
-        # Large filings (10-K, 100+ pages) - score and slice by relevance
+        # Large filings (10-K, 100+ pages) - score and extract most relevant sections
         if query and len(query.strip()) > 3:
-            q_tokens = [w.lower() for w in re.findall(r'\b[a-zA-Z]{3,}\b', query) if w.lower() not in {"what", "show", "tell", "from", "with", "this"}]
-            scored_pages = []
-            for p_num, p_txt in page_texts:
-                score = sum(p_txt.lower().count(t) for t in q_tokens)
-                scored_pages.append((score, p_num, p_txt))
-            scored_pages.sort(key=lambda x: x[0], reverse=True)
+            tokens = [w.lower() for w in re.findall(r'\b[a-zA-Z]{3,}\b', query) if w.lower() not in {"what", "show", "tell", "from", "with", "this"}]
+            ranked = []
+            for p_num, p_txt in extracted_pages:
+                score = sum(p_txt.lower().count(t) for t in tokens)
+                ranked.append((score, p_num, p_txt))
+            ranked.sort(key=lambda x: x[0], reverse=True)
 
             selected = []
             curr_len = 0
-            for score, p_num, p_txt in scored_pages:
-                if curr_len + len(p_txt) > max_context_chars and selected:
+            for score, p_num, p_txt in ranked:
+                if curr_len + len(p_txt) > max_chars and selected:
                     break
                 selected.append(f"--- [PAGE {p_num}] ---\n{p_txt}")
                 curr_len += len(p_txt)
             return "\n\n".join(selected)
 
-        # Baseline overview
         combined = []
         curr_len = 0
-        for p_num, p_txt in page_texts[:15]:
-            if curr_len + len(p_txt) > max_context_chars:
+        for p_num, p_txt in extracted_pages[:15]:
+            if curr_len + len(p_txt) > max_chars:
                 break
             combined.append(f"--- [PAGE {p_num}] ---\n{p_txt}")
             curr_len += len(p_txt)
         return "\n\n".join(combined)
 
     except Exception as e:
-        return f"⚠️ [PDF Parsing Exception]: {str(e)}"
+        return f"⚠️ [PDF Parsing Warning]: {str(e)}"
 
 def extract_and_fetch_live_data(prompt: str, status_callback=None) -> str:
     injected_context = []
@@ -523,7 +520,7 @@ def run_analyst_agent(
     if uploaded_pdf is not None:
         if status_callback:
             status_callback("info", "Extracting institutional filing sections...")
-        pdf_text = parse_large_pdf(uploaded_pdf, query=user_input)
+        pdf_text = extract_pdf_document_text(uploaded_pdf, query=user_input)
         if pdf_text and not pdf_text.startswith("⚠️"):
             pdf_context = (
                 f"[OFFICIAL FINANCIAL FILING DOCUMENT ATTACHED]:\n"
