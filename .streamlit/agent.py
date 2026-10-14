@@ -17,10 +17,13 @@ try:
     import tools
     tool_get_financial_data = getattr(tools, "tool_get_financial_data", lambda x: {"error": "unavailable"})
     dynamic_web_search = getattr(tools, "dynamic_web_search", lambda x: None)
+    parse_large_pdf = getattr(tools, "parse_large_pdf", lambda f, q="": None)
 except Exception:
     def tool_get_financial_data(x):
         return {"error": "unavailable"}
     def dynamic_web_search(x):
+        return None
+    def parse_large_pdf(f, q=""):
         return None
 
 # Blacklist of macro, ALM, FIG, and restructuring terms to prevent false-positive ticker lookups
@@ -38,10 +41,10 @@ FINANCIAL_ACRONYMS_BLACKLIST = {
 
 SYSTEM_PROMPT = (
     "You are ORYN Analyst, an elite institutional BFSI quantitative analyst and corporate intelligence advisor.\n\n"
-    "CRITICAL CONVERSATION & MEMORY PROTOCOL:\n"
-    "1. MULTI-TURN CONTINUITY: Always review previous turns in the conversation. When a user asks to 're-run', "
-    "'sensitize', or 'modify' a previous calculation, retain ALL baseline parameters (EBITDA, purchase price, equity check, "
-    "debt balances) from the preceding prompt and ONLY update the requested variable.\n"
+    "CRITICAL CONVERSATION & MEMORY VAULT PROTOCOL:\n"
+    "1. MULTI-TURN CONTINUITY ACROSS SESSIONS: Review ALL conversation turns and archived session history in your prompt. "
+    "When a user asks to 're-run', 'sensitize', or 'modify' a previous calculation, retain ALL baseline parameters (EBITDA, purchase price, "
+    "equity check, debt balances) from the prior prompt or session archive and ONLY adjust the requested variable.\n"
     "2. NO BRACKET TAGS OR ECHOING: NEVER output bracketed headers (e.g., [ORYN REPORT]). Begin directly with the analysis.\n"
     "3. NO CHATBOT HEDGING: Eliminate conversational filler (e.g., 'Based on the available information'). Deliver crisp intelligence.\n"
     "4. REAL-WORLD INCUMBENCY:\n"
@@ -50,7 +53,7 @@ SYSTEM_PROMPT = (
     "   - SBI Chairman: Challa Sreenivasulu Setty (C.S. Setty), appointed August 2024.\n"
     "   - LIC CEO & MD: R. Doraiswamy, appointed July 2025.\n"
     "   - SpaceX: Founded in 2002 by Elon Musk.\n\n"
-    "FIG BANKING & CORPORATE FINANCE LOGIC (STRICT ADHERENCE):\n"
+    "FIG BANKING & CORPORATE FINANCE LOGIC:\n"
     "1. COMMERCIAL BANK COVENANTS & LEVERAGE:\n"
     "   - Regulated commercial banks DO NOT have 'Debt-to-EBITDA' covenants. Deposits and debt are funding liabilities, not corporate debt.\n"
     "   - Banks are governed by Basel III Regulatory Capital Requirements: CET1 ratio (>= 4.5%), Tier 1 ratio (>= 6.0%), "
@@ -206,4 +209,326 @@ def sanitize_report_formatting(text: str) -> str:
             return []
         if len(tbl) >= 2 and not any('---' in r for r in tbl[:2]):
             header_cols = [c.strip() for c in tbl[0].strip('|').split('|')]
-            divider = "| " + " | ".join([":---"] * len(header_cols)) + " |
+            divider = "| " + " | ".join([":---"] * len(header_cols)) + " |"
+            tbl.insert(1, divider)
+        return [""] + tbl + [""]
+
+    for line in lines:
+        stripped = line.strip()
+        stripped = re.sub(r'^\d+[\.\)]\s*\|', '|', stripped)
+        
+        if '|' in stripped:
+            if not stripped.startswith('|'):
+                stripped = '| ' + stripped
+            if not stripped.endswith('|'):
+                stripped = stripped + ' |'
+            stripped = stripped.replace('$', 'USD ')
+            current_table.append(stripped)
+        else:
+            if current_table:
+                output.extend(flush_tbl(current_table))
+                current_table = []
+            output.append(line)
+
+    if current_table:
+        output.extend(flush_tbl(current_table))
+
+    res = '\n'.join(output)
+    res = re.sub(r'\$\s*([0-9])', r'USD \1', res)
+    return re.sub(r'\n{3,}', '\n\n', res).strip()
+
+def is_quantitative_model_request(prompt: str) -> bool:
+    p = prompt.lower()
+    dcf_terms = [
+        "dcf", "discounted cash flow", "sensitivity matrix", 
+        "unlevered", "run a financial model", 
+        "build a financial model", "run a 5-year", "run a 10-year",
+        "export the financial model to excel"
+    ]
+    if any(t in p for t in dcf_terms):
+        return True
+    has_discount_metric = any(m in p for m in ["wacc", "discount rate", "terminal growth"])
+    has_financial_metric = any(m in p for m in ["ebitda margin", "revenue growth", "cash flow projection"])
+    return bool(has_discount_metric and has_financial_metric)
+
+def resolve_api_key(api_key: str = "") -> str:
+    if api_key and api_key.strip():
+        return api_key.strip()
+    try:
+        import streamlit as st
+        if "GROQ_API_KEY" in st.secrets and st.secrets["GROQ_API_KEY"]:
+            return str(st.secrets["GROQ_API_KEY"]).strip()
+    except Exception:
+        pass
+    return os.environ.get("GROQ_API_KEY", "").strip()
+
+def get_best_available_model(client: Groq, exclude_model: str = None, force_refresh: bool = False) -> str:
+    global CACHED_WORKING_MODEL
+    if CACHED_WORKING_MODEL and not force_refresh and CACHED_WORKING_MODEL != exclude_model:
+        return CACHED_WORKING_MODEL
+
+    try:
+        models_data = client.models.list().data
+        available_ids = [m.id for m in models_data]
+    except Exception:
+        available_ids = []
+
+    filter_out = ["whisper", "guard", "audio", "orpheus", "vision", "embed", "safeguard", "qwen"]
+    candidates = [m for m in available_ids if not any(b in m.lower() for b in filter_out) and m != exclude_model]
+    preference = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "llama3-70b-8192", "llama3-8b-8192"]
+
+    test_queue = [m for m in preference if m in candidates] + [m for m in candidates if m not in preference]
+    if not test_queue:
+        test_queue = candidates if candidates else preference
+
+    for model_name in test_queue:
+        try:
+            client.chat.completions.create(model=model_name, messages=[{"role": "user", "content": "ping"}], max_tokens=1)
+            CACHED_WORKING_MODEL = model_name
+            return model_name
+        except Exception:
+            continue
+
+    if candidates:
+        CACHED_WORKING_MODEL = candidates[0]
+        return CACHED_WORKING_MODEL
+
+    return "llama-3.3-70b-versatile"
+
+def create_completion_with_fallback(client: Groq, preferred_model: str = None, status_callback=None, **kwargs):
+    global CACHED_WORKING_MODEL
+    active_model = preferred_model or get_best_available_model(client)
+    
+    kwargs["max_tokens"] = min(kwargs.get("max_tokens", 950), 950)
+    kwargs["temperature"] = kwargs.get("temperature", 0.1)
+    kwargs["frequency_penalty"] = 0.15
+    kwargs["presence_penalty"] = 0.1
+    kwargs["model"] = active_model
+
+    try:
+        return client.chat.completions.create(**kwargs)
+    except Exception as e:
+        err_str = str(e).lower()
+
+        if any(term in err_str for term in ["output tokens per minute", "otpm", "reduce max_tokens", "rate_limit_exceeded"]):
+            kwargs["max_tokens"] = 700
+            alt_model = "llama-3.1-8b-instant" if active_model != "llama-3.1-8b-instant" else "llama-3.3-70b-versatile"
+            kwargs["model"] = alt_model
+            if status_callback:
+                status_callback("info", f"Adjusting token quota (OTPM safeguard active)... retrying with {alt_model}.")
+            return client.chat.completions.create(**kwargs)
+
+        if any(term in err_str for term in ["404", "model_not_found", "decommissioned", "does not exist", "not have access"]):
+            alt_model = get_best_available_model(client, exclude_model=active_model, force_refresh=True)
+            kwargs["model"] = alt_model
+            return client.chat.completions.create(**kwargs)
+
+        if "429" in err_str:
+            delay_match = re.search(r'try again in ([0-9.]+)s', err_str)
+            sleep_sec = float(delay_match.group(1)) + 0.5 if delay_match else 2.5
+            time.sleep(sleep_sec)
+            alt_model = get_best_available_model(client, exclude_model=active_model, force_refresh=True)
+            kwargs["model"] = alt_model
+            return client.chat.completions.create(**kwargs)
+        raise e
+
+def build_contextual_messages(user_input: str, system_prompt: str) -> list[dict]:
+    """Preserves multi-turn state across live turns AND across up to 3 session resets."""
+    history = []
+    vault_context = []
+
+    try:
+        import streamlit as st
+        # 1. Recover memory from session vault (persists across up to 3 resets)
+        if "session_vault" in st.session_state and isinstance(st.session_state.session_vault, list):
+            for s_idx, session_turns in enumerate(st.session_state.session_vault[-3:]):
+                summary_lines = []
+                for m in session_turns:
+                    role_lbl = "USER" if m.get("role") == "user" else "ANALYST"
+                    content_snip = str(m.get("content", ""))[:400].replace("\n", " ")
+                    summary_lines.append(f"{role_lbl}: {content_snip}")
+                if summary_lines:
+                    vault_context.append(f"[ARCHIVED RUN #{s_idx + 1}]:\n" + "\n".join(summary_lines))
+
+        # 2. Recover active messages from current screen
+        if "messages" in st.session_state and isinstance(st.session_state.messages, list):
+            stored = st.session_state.messages
+            candidates = [m for m in stored if m.get("content") != user_input]
+            for m in candidates[-6:]:
+                role = m.get("role", "user")
+                content = str(m.get("content", "")).strip()
+                if role in ["user", "assistant"] and content:
+                    history.append({"role": role, "content": content})
+    except Exception:
+        pass
+
+    prompt_with_vault = system_prompt
+    if vault_context:
+        prompt_with_vault += "\n\nPREVIOUS SESSIONS ARCHIVE (RETAINED FROM RESETS):\n" + "\n\n".join(vault_context)
+
+    return [{"role": "system", "content": prompt_with_vault}] + history + [{"role": "user", "content": user_input}]
+
+def parse_dcf_assumptions(prompt: str) -> dict:
+    """Parses dynamic DCF parameters from conversational input with fallback defaults."""
+    p_lower = prompt.lower()
+    
+    growth_match = re.search(r'(?:growing|growth rate|revenue growth|growth)[\s:]*(?:at\s*)?([0-9.]+)%', p_lower)
+    growth = float(growth_match.group(1)) / 100.0 if growth_match else 0.20
+
+    y1_num = None
+    m1 = re.search(r'([0-9.]+)\s*(?:m|million)?\s*(?:revenue\s+)?in\s+year[\s-]*1', p_lower)
+    m2 = re.search(r'rev(?:enue)?[\s:]*(?:usd|\$)?\s*([0-9.]+)\s*(?:m|million)?\s+in\s+year[\s-]*1', p_lower)
+    m3 = re.search(r'year[\s-]*1\s*rev(?:enue)?[\s:]*(?:usd|\$)?\s*([0-9.]+)', p_lower)
+
+    if m1:
+        y1_num = float(m1.group(1))
+    elif m2:
+        y1_num = float(m2.group(1))
+    elif m3:
+        y1_num = float(m3.group(1))
+
+    if y1_num is not None:
+        base_revenue = y1_num / (1.0 + growth) if growth > -0.99 else y1_num
+    else:
+        m_gen = re.search(r'(?:revenue|rev)[\s:]*(?:usd|\$)?\s*([0-9.]+)', p_lower)
+        if m_gen:
+            val = float(m_gen.group(1))
+            if "start" in p_lower or "base" in p_lower:
+                base_revenue = val
+            else:
+                base_revenue = val / (1.0 + growth)
+        else:
+            base_revenue = 50.0
+
+    margin_match = re.search(r'(?:ebitda margin|margin|ebitda)[\s:]*(?:apparently\s*)?([0-9.]+)%', p_lower)
+    margin = float(margin_match.group(1)) / 100.0 if margin_match else 0.25
+
+    wacc_match = re.search(r'(?:wacc|discount rate|cost of capital)[\s:]*(?:apparently\s*)?([0-9.]+)%', p_lower)
+    wacc = float(wacc_match.group(1)) / 100.0 if wacc_match else 0.10
+
+    tv_match = re.search(r'(?:terminal growth|terminal rate|perpetual growth)[\s:]*(?:apparently\s*)?([0-9.]+)%', p_lower)
+    tv_rate = float(tv_match.group(1)) / 100.0 if tv_match else 0.025
+
+    return {
+        "base_revenue": base_revenue,
+        "growth": growth,
+        "margin": margin,
+        "wacc": wacc,
+        "tv_rate": tv_rate
+    }
+
+def generate_deterministic_dcf_artifacts(user_input: str) -> tuple[str, bytes | None, bytes | None]:
+    params = parse_dcf_assumptions(user_input)
+    base_rev = params["base_revenue"]
+    growth = params["growth"]
+    margin = params["margin"]
+    wacc = params["wacc"]
+    tv_rate = params["tv_rate"]
+    years = 5
+
+    if tv_rate >= wacc:
+        err_msg = (
+            f"⚠️ **DCF Model Exception**: Terminal growth rate ({tv_rate:.1%}) must be strictly less than "
+            f"WACC ({wacc:.1%}) to avoid a mathematical divergence in the Gordon Growth calculation."
+        )
+        return err_msg, None, None
+
+    years_idx = list(range(1, years + 1))
+    rev = [base_rev * ((1 + growth) ** t) for t in years_idx]
+    ebitda = [r * margin for r in rev]
+    df = [1 / ((1 + wacc) ** t) for t in years_idx]
+    
+    pv_ufcf = [u * d for u, d in zip(ebitda, df)]
+    sum_pv_ufcf = sum(pv_ufcf)
+    tv = (ebitda[-1] * (1 + tv_rate)) / (wacc - tv_rate)
+    pv_tv = tv / ((1 + wacc) ** years)
+    ev = sum_pv_ufcf + pv_tv
+
+    df_proj = pd.DataFrame({
+        "Year": [str(y) for y in years_idx],
+        "Revenue (USD M)": [f"{x:.2f}" for x in rev],
+        "EBITDA (USD M)": [f"{x:.2f}" for x in ebitda],
+        "Discount Factor": [f"{x:.4f}" for x in df],
+        "PV of UFCF (USD M)": [f"{x:.2f}" for x in pv_ufcf]
+    })
+
+    fig, ax = plt.subplots(figsize=(8, 4))
+    ax.bar(['PV Cash Flows', 'PV Terminal Value'], [sum_pv_ufcf, pv_tv], color=['#4a148c', '#7b1fa2'], width=0.45)
+    ax.set_title(f'Enterprise Value: USD {ev:.2f}M', fontsize=12, fontweight='bold')
+    plt.tight_layout()
+    
+    img_buf = io.BytesIO()
+    plt.savefig(img_buf, format='png', dpi=200)
+    plt.close('all')
+
+    excel_buf = io.BytesIO()
+    with pd.ExcelWriter(excel_buf, engine='openpyxl') as writer:
+        df_proj.to_excel(writer, sheet_name='DCF_Projections', index=False)
+
+    rows = ["| " + " | ".join(map(str, row)) + " |" for row in df_proj.values]
+    headers = "| " + " | ".join(df_proj.columns) + " |"
+    dividers = "| " + " | ".join([":---"] * len(df_proj.columns)) + " |"
+    table_md = "\n".join([headers, dividers] + rows)
+
+    calc_briefing = (
+        f"### 📊 Institutional DCF Valuation Schedule\n\n"
+        f"**Implied Enterprise Value:** **USD {ev:.2f}M**\n\n"
+        f"{table_md}\n\n"
+        f"* **Model Assumptions:** Year-1 Rev: USD {rev[0]:.2f}M • Growth: {growth:.1%} • Margin: {margin:.1%} • WACC: {wacc:.1%} • Terminal Rate: {tv_rate:.2%}\n"
+        f"* **Cumulative PV of Cash Flows:** USD {sum_pv_ufcf:.2f}M\n"
+        f"* **Terminal Value (TV):** USD {tv:.2f}M\n"
+        f"* **Present Value of TV:** USD {pv_tv:.2f}M\n"
+        f"* **Implied Enterprise Value (EV):** **USD {ev:.2f}M**"
+    )
+    return calc_briefing, img_buf.getvalue(), excel_buf.getvalue()
+
+def run_analyst_agent(
+    user_input: str,
+    api_key: str = "",
+    selected_model: str = None,
+    hitl_enabled: bool = True,
+    status_callback=None,
+    uploaded_pdf=None,
+    **kwargs
+) -> tuple[str, bytes | None, bytes | None, float]:
+    start_time = time.perf_counter()
+    active_key = resolve_api_key(api_key)
+    if not active_key:
+        return "⚠️ **API Key Missing**: Please provide a Groq API key in the sidebar.", None, None, 0.0
+
+    try:
+        client = Groq(api_key=active_key, max_retries=0)
+    except Exception as e:
+        return f"⚠️ **Client Error**: {e}", None, None, 0.0
+
+    if is_quantitative_model_request(user_input):
+        briefing_text, plot_bytes, excel_bytes = generate_deterministic_dcf_artifacts(user_input)
+        return sanitize_report_formatting(briefing_text), plot_bytes, excel_bytes, time.perf_counter() - start_time
+
+    context_data = extract_and_fetch_live_data(user_input, status_callback=status_callback)
+    
+    # Ingest 200MB PDF document if provided
+    pdf_context = ""
+    if uploaded_pdf is not None:
+        if status_callback:
+            status_callback("info", "Parsing institutional filing / PDF document...")
+        pdf_text = parse_large_pdf(uploaded_pdf, query=user_input)
+        if pdf_text:
+            pdf_context = f"\n\n[UPLOADED INSTITUTIONAL FILING DATA]:\n{pdf_text}\n\n"
+
+    augmented_prompt = user_input + context_data + pdf_context
+
+    try:
+        messages = build_contextual_messages(augmented_prompt, SYSTEM_PROMPT)
+        resp = create_completion_with_fallback(
+            client=client,
+            preferred_model=selected_model,
+            status_callback=status_callback,
+            messages=messages,
+            max_tokens=950
+        )
+        final_text = resp.choices[0].message.content or ""
+        elapsed = time.perf_counter() - start_time
+        return sanitize_report_formatting(final_text), None, None, elapsed
+    except Exception as e:
+        return f"Error: {e}", None, None, time.perf_counter() - start_time
