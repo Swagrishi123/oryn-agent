@@ -143,7 +143,7 @@ def extract_pdf_document_text(uploaded_payload, query: str = "", max_chars: int 
         if not extracted_pages:
             return ""
 
-        # Short filings (<= 8 pages) - provide full text
+        # Short filings (<= 8 pages) - provide full document verbatim
         if len(extracted_pages) <= 8:
             return "\n\n".join([f"--- [PAGE {p_num}] ---\n{p_txt}" for p_num, p_txt in extracted_pages])
 
@@ -241,53 +241,31 @@ def extract_and_fetch_live_data(prompt: str, status_callback=None) -> str:
     return "\n\n" + "\n\n".join(injected_context) + "\n\n" if injected_context else ""
 
 def sanitize_report_formatting(text: str) -> str:
-    cleaned = re.sub(r'\[[A-Za-z0-9\s\-_\.]+\]:?\s*', '', text)
-    cleaned = re.sub(r'```(?:python)?\s*[\s\S]*?```', '', cleaned)
-    filler_patterns = [
-        r'(?i)^please provide the requested information[^\n]*\n?',
-        r'(?i)based on the (?:available )?(?:information|data)[,\s]*',
-        r'(?i)please note that (?:the )?(?:information|data)[,\s\S]*?(?=\n|$)',
-        r'(?i)for more detailed information[,\s\S]*?(?=\n|$)'
-    ]
-    for fp in filler_patterns:
-        cleaned = re.sub(fp, '', cleaned)
+    """Cleans up markdown formatting, unescapes code wrappers, and guarantees no empty returns."""
+    if not text or not text.strip():
+        return "No analysis generated. Please check your query or filing input."
+
+    # 1. If Groq wrapped the whole answer inside a markdown code fence, unwrap it cleanly
+    cleaned = re.sub(r'^```(?:markdown|text)?\s*\n', '', text.strip(), flags=re.IGNORECASE)
+    cleaned = re.sub(r'\n```\s*$', '', cleaned.strip())
+
+    # 2. Strip bracketed echo tags at the beginning (e.g., [ORYN REPORT])
+    cleaned = re.sub(r'^\[(?:ORYN REPORT|REPORT|ANALYSIS|QUANTITATIVE ANALYSIS)\]:?\s*', '', cleaned, flags=re.IGNORECASE)
+
+    # 3. Remove robotic introductory filler phrases if present at the start
+    cleaned = re.sub(r'(?i)^(?:based on the (?:provided|available|attached) (?:information|data|filing|credit agreement)[,\s]*\n?)+', '', cleaned)
+
+    # 4. Convert isolated dollar signs before numbers to 'USD ' to prevent Streamlit LaTeX rendering bugs
+    cleaned = re.sub(r'\$\s*([0-9])', r'USD \1', cleaned)
+
+    # 5. Fix table row spacing if pipes are jammed together
     cleaned = re.sub(r'\|\s*\|', '|\n|', cleaned)
 
-    lines = cleaned.split('\n')
-    output = []
-    current_table = []
+    # Bulletproof Safety: If sanitization somehow removed the text, ALWAYS return original text
+    if not cleaned.strip():
+        return text.strip()
 
-    def flush_tbl(tbl):
-        if not tbl:
-            return []
-        if len(tbl) >= 2 and not any('---' in r for r in tbl[:2]):
-            header_cols = [c.strip() for c in tbl[0].strip('|').split('|')]
-            divider = "| " + " | ".join([":---"] * len(header_cols)) + " |"
-            tbl.insert(1, divider)
-        return [""] + tbl + [""]
-
-    for line in lines:
-        stripped = line.strip()
-        stripped = re.sub(r'^\d+[\.\)]\s*\|', '|', stripped)
-        if '|' in stripped:
-            if not stripped.startswith('|'):
-                stripped = '| ' + stripped
-            if not stripped.endswith('|'):
-                stripped = stripped + ' |'
-            stripped = stripped.replace('$', 'USD ')
-            current_table.append(stripped)
-        else:
-            if current_table:
-                output.extend(flush_tbl(current_table))
-                current_table = []
-            output.append(line)
-
-    if current_table:
-        output.extend(flush_tbl(current_table))
-
-    res = '\n'.join(output)
-    res = re.sub(r'\$\s*([0-9])', r'USD \1', res)
-    return re.sub(r'\n{3,}', '\n\n', res).strip()
+    return cleaned.strip()
 
 def is_quantitative_model_request(prompt: str) -> bool:
     p = prompt.lower()
