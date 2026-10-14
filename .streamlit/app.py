@@ -12,58 +12,73 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS: Docks the '+' button directly INSIDE the typing bar (Gemini-style)
+# Custom CSS: Docks and centers the Gemini '+' button directly INSIDE the typing bar
 st.markdown(
     """
     <style>
-    /* Make the bottom container allow precise positioning */
+    /* Make the bottom dock container allow absolute positioning */
     div[data-testid="stBottom"] > div,
     div[data-testid="stBottomBlockContainer"] {
         position: relative !important;
     }
 
-    /* Indent chat placeholder and text so it starts after the '+' button */
+    /* Indent chat textarea so placeholder and typing start neatly after the '+' button */
     div[data-testid="stChatInput"] textarea {
-        padding-left: 54px !important;
+        padding-left: 56px !important;
     }
 
-    /* Pull the attach button directly inside the left edge of the typing pill */
-    div[data-testid="stBottom"] div[data-testid="stElementContainer"]:has(#gemini_attach_anchor),
-    div[data-testid="stBottom"] div[data-testid="stElementContainer"]:has(div[data-testid="stButton"]) {
+    /* Position the '+' button directly inside the left curve of the chat pill */
+    .gemini-attach-wrapper {
         position: absolute !important;
-        bottom: 22px !important;
+        bottom: 24px !important;
         left: 14px !important;
         z-index: 99999 !important;
         width: 32px !important;
         height: 32px !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+    }
+
+    .gemini-attach-wrapper div[data-testid="stButton"] {
         margin: 0 !important;
         padding: 0 !important;
     }
 
-    /* Style the '+' button to match Gemini: borderless, circular, centered */
-    div[data-testid="stBottom"] div[data-testid="stButton"] > button {
+    /* Style the '+' button: circular, borderless hover, centered icon */
+    .gemini-attach-wrapper div[data-testid="stButton"] > button {
         border-radius: 50% !important;
         width: 32px !important;
         height: 32px !important;
         min-height: 32px !important;
         max-height: 32px !important;
-        border: none !important;
-        background-color: transparent !important;
-        color: #7b1fa2 !important;
-        font-size: 20px !important;
-        font-weight: 500 !important;
+        border: 1px solid #c084fc !important;
+        background-color: #faf5ff !important;
+        color: #4a148c !important;
+        font-size: 18px !important;
+        font-weight: 600 !important;
         line-height: 1 !important;
         display: flex !important;
         align-items: center !important;
         justify-content: center !important;
         padding: 0 !important;
         margin: 0 !important;
-        transition: background-color 0.2s ease, transform 0.2s ease !important;
+        transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.2s !important;
+        box-shadow: 0 1px 3px rgba(74, 20, 140, 0.12) !important;
     }
 
-    div[data-testid="stBottom"] div[data-testid="stButton"] > button:hover {
-        background-color: rgba(123, 31, 162, 0.12) !important;
-        color: #4a148c !important;
+    .gemini-attach-wrapper div[data-testid="stButton"] > button:hover {
+        background-color: #ede9fe !important;
+        border-color: #7b1fa2 !important;
+        color: #3b0764 !important;
+    }
+
+    /* Rotate into an 'X' when the drawer is open */
+    .gemini-attach-wrapper.is-open div[data-testid="stButton"] > button {
+        transform: rotate(45deg) !important;
+        background-color: #4a148c !important;
+        color: #ffffff !important;
+        border-color: #4a148c !important;
     }
 
     /* Document Drawer Styling */
@@ -97,7 +112,15 @@ if "active_pdf" not in st.session_state:
 # SIDEBAR (RESET & SYSTEM CONFIG ONLY)
 # ==========================================
 with st.sidebar:
-    st.title("🏛️ ORYN Analyst")
+    st.markdown(
+        """
+        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 4px;">
+            <span style="font-size: 28px;">🏛️</span>
+            <span style="font-size: 22px; font-weight: 700; color: #4a148c;">ORYN Analyst</span>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
     st.caption("Institutional BFSI Quantitative Intelligence")
     st.markdown("---")
 
@@ -140,9 +163,24 @@ with st.sidebar:
             st.rerun()
 
 # ==========================================
-# MAIN INTERACTION PANEL
+# MAIN INTERACTION PANEL (WITH ORYN EMBLEM)
 # ==========================================
-st.markdown("### Institutional Quantitative Workspace")
+st.markdown(
+    """
+    <div style="display: flex; align-items: center; gap: 14px; margin-bottom: 1.2rem;">
+        <span style="font-size: 34px;">🏛️</span>
+        <div>
+            <h2 style="margin: 0; color: #4a148c; font-weight: 700; font-size: 26px; line-height: 1.2;">
+                ORYN Analyst
+            </h2>
+            <p style="margin: 0; color: #6b7280; font-size: 14px;">
+                Institutional BFSI Quantitative Intelligence & Workspace
+            </p>
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
 
 # Render active chat history
 for message in st.session_state.messages:
@@ -165,7 +203,7 @@ for message in st.session_state.messages:
 bottom_area = st.bottom if hasattr(st, "bottom") else st.container()
 
 with bottom_area:
-    # 1. Expandable PDF Drawer (Slides open above the typing bar)
+    # 1. Expandable PDF Drawer (Slides open above typing pill)
     if st.session_state.show_uploader:
         with st.container():
             st.markdown(
@@ -190,13 +228,15 @@ with bottom_area:
 
     # 2. Attached Document Indicator Chip
     if st.session_state.active_pdf is not None and not st.session_state.show_uploader:
-        st.caption(f"📄 **Filing Loaded:** {st.session_state.active_pdf.name} ({(st.session_state.active_pdf.size)/(1024*1024):.1f} MB) — *Click ➕ to change document*")
+        st.caption(f"📄 **Filing Loaded:** {st.session_state.active_pdf.name} ({(st.session_state.active_pdf.size)/(1024*1024):.1f} MB) — *Click ➕ to change or detach*")
 
-    # 3. Rotating Gemini '+' Attachment Button (Anchored inside the typing bar)
-    btn_icon = "✕" if st.session_state.show_uploader else "➕"
-    if st.button(btn_icon, key="gemini_attach_btn", help="Attach 10-K, CIM, or Credit Agreement"):
+    # 3. Gemini '+' Attachment Button (Anchored & Centered inside the typing bar)
+    btn_state_class = "is-open" if st.session_state.show_uploader else ""
+    st.markdown(f'<div class="gemini-attach-wrapper {btn_state_class}">', unsafe_allow_html=True)
+    if st.button("➕", key="gemini_attach_btn", help="Attach 10-K, CIM, or Credit Agreement"):
         st.session_state.show_uploader = not st.session_state.show_uploader
         st.rerun()
+    st.markdown('</div>', unsafe_allow_html=True)
 
     # 4. Bottom Chat Input
     user_prompt = st.chat_input("Enter institutional query, model schedule, or analysis directive...")
