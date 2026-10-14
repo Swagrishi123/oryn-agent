@@ -12,87 +12,94 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS: Floating typing bar, soft shadow send/attach buttons, and Gemini-style docking
+# Custom CSS: Ultra-sleek, compact typing pill calibrated for mobile and desktop
 st.markdown(
     """
     <style>
-    /* Make the bottom dock container allow absolute positioning */
+    /* Container setup for absolute button docking */
     div[data-testid="stBottom"] > div,
     div[data-testid="stBottomBlockContainer"] {
         position: relative !important;
         background-color: transparent !important;
+        padding-bottom: 6px !important;
     }
 
-    /* Floating typing pill: sleek rounded border and soft ambient shadow */
+    /* Force the typing pill to be thin, sleek, and compact (44px height) */
     div[data-testid="stChatInput"] {
-        border-radius: 28px !important;
+        border-radius: 26px !important;
         background-color: #ffffff !important;
-        border: 1px solid #e9d5ff !important;
-        box-shadow: 0 4px 20px rgba(74, 20, 140, 0.08), 0 2px 6px rgba(0, 0, 0, 0.04) !important;
-        transition: box-shadow 0.25s ease, border-color 0.25s ease !important;
+        border: 1.5px solid #d8b4fe !important;
+        box-shadow: 0 2px 10px rgba(74, 20, 140, 0.07) !important;
+        min-height: 44px !important;
+        max-height: 44px !important;
+        height: 44px !important;
+        padding-top: 0px !important;
+        padding-bottom: 0px !important;
+        transition: box-shadow 0.2s ease, border-color 0.2s ease !important;
     }
 
     div[data-testid="stChatInput"]:focus-within {
-        border-color: #a855f7 !important;
-        box-shadow: 0 6px 26px rgba(74, 20, 140, 0.14), 0 2px 8px rgba(0, 0, 0, 0.06) !important;
+        border-color: #7b1fa2 !important;
+        box-shadow: 0 4px 16px rgba(74, 20, 140, 0.14) !important;
     }
 
-    /* Indent chat textarea so text starts neatly after the '+' button */
+    /* Single-line compact textarea with left indent for the '+' button */
     div[data-testid="stChatInput"] textarea {
-        padding-left: 56px !important;
-        font-size: 14.5px !important;
+        padding-left: 48px !important;
+        padding-right: 42px !important;
+        padding-top: 10px !important;
+        padding-bottom: 10px !important;
+        min-height: 42px !important;
+        max-height: 42px !important;
+        height: 42px !important;
+        font-size: 14px !important;
+        line-height: 22px !important;
+        resize: none !important;
+        box-sizing: border-box !important;
+        overflow: hidden !important;
     }
 
-    /* Floating Send Button: Soft elevation and purple tint */
+    /* Floating Send Button centered inside the thin pill */
     div[data-testid="stChatInput"] button {
         border-radius: 50% !important;
-        width: 32px !important;
-        height: 32px !important;
-        min-height: 32px !important;
+        width: 30px !important;
+        height: 30px !important;
+        min-height: 30px !important;
+        max-height: 30px !important;
         background-color: #faf5ff !important;
         color: #4a148c !important;
         border: 1px solid #d8b4fe !important;
-        box-shadow: 0 2px 6px rgba(74, 20, 140, 0.18) !important;
-        transition: transform 0.18s ease, box-shadow 0.18s ease, background-color 0.18s ease !important;
-    }
-
-    div[data-testid="stChatInput"] button:hover {
-        background-color: #4a148c !important;
-        color: #ffffff !important;
-        border-color: #4a148c !important;
-        transform: scale(1.06) !important;
-        box-shadow: 0 4px 12px rgba(74, 20, 140, 0.28) !important;
-    }
-
-    /* Position the '+' button directly inside the left curve of the typing pill */
-    .gemini-attach-wrapper {
-        position: absolute !important;
-        bottom: 50px !important;
-        left: 14px !important;
-        z-index: 99999 !important;
-        width: 32px !important;
-        height: 32px !important;
+        box-shadow: 0 1px 4px rgba(74, 20, 140, 0.15) !important;
+        margin-top: auto !important;
+        margin-bottom: auto !important;
         display: flex !important;
         align-items: center !important;
         justify-content: center !important;
     }
 
-    .gemini-attach-wrapper div[data-testid="stButton"] {
+    /* Precise anchor: Docks the '+' button directly inside the left of the 44px pill */
+    .st-key-gemini_attach_btn {
+        position: absolute !important;
+        left: 12px !important;
+        bottom: 34px !important;
+        z-index: 99999 !important;
+        width: 30px !important;
+        height: 30px !important;
         margin: 0 !important;
         padding: 0 !important;
     }
 
-    /* Floating Attach '+' Button */
-    .gemini-attach-wrapper div[data-testid="stButton"] > button {
+    .st-key-gemini_attach_btn > div,
+    .st-key-gemini_attach_btn button {
         border-radius: 50% !important;
-        width: 32px !important;
-        height: 32px !important;
-        min-height: 32px !important;
-        max-height: 32px !important;
+        width: 30px !important;
+        height: 30px !important;
+        min-height: 30px !important;
+        max-height: 30px !important;
         border: 1px solid #d8b4fe !important;
         background-color: #faf5ff !important;
         color: #4a148c !important;
-        font-size: 18px !important;
+        font-size: 17px !important;
         font-weight: 600 !important;
         line-height: 1 !important;
         display: flex !important;
@@ -100,24 +107,14 @@ st.markdown(
         justify-content: center !important;
         padding: 0 !important;
         margin: 0 !important;
-        box-shadow: 0 2px 6px rgba(74, 20, 140, 0.16) !important;
-        transition: transform 0.22s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.2s, box-shadow 0.2s !important;
+        box-shadow: 0 1px 4px rgba(74, 20, 140, 0.12) !important;
+        transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.2s !important;
     }
 
-    .gemini-attach-wrapper div[data-testid="stButton"] > button:hover {
+    .st-key-gemini_attach_btn button:hover {
         background-color: #ede9fe !important;
         border-color: #7b1fa2 !important;
         color: #3b0764 !important;
-        transform: scale(1.06) !important;
-        box-shadow: 0 4px 10px rgba(74, 20, 140, 0.24) !important;
-    }
-
-    /* Rotate into an 'X' when the drawer is open */
-    .gemini-attach-wrapper.is-open div[data-testid="stButton"] > button {
-        transform: rotate(45deg) !important;
-        background-color: #4a148c !important;
-        color: #ffffff !important;
-        border-color: #4a148c !important;
     }
 
     /* Document Drawer Styling */
@@ -125,19 +122,19 @@ st.markdown(
         background-color: #ffffff;
         border: 1px solid #e9d5ff;
         border-radius: 12px;
-        padding: 12px 16px;
+        padding: 12px 14px;
         margin-bottom: 8px;
         box-shadow: 0 4px 16px rgba(74, 20, 140, 0.08);
     }
 
-    /* Disclaimer Label */
+    /* Discreet Disclaimer */
     .oryn-disclaimer {
         text-align: center;
-        margin-top: 6px;
+        margin-top: 5px;
         margin-bottom: 2px;
-        font-size: 11.5px;
+        font-size: 11px;
         color: #8e8ea0;
-        letter-spacing: 0.15px;
+        letter-spacing: 0.1px;
     }
     </style>
     """,
@@ -247,19 +244,19 @@ for message in st.session_state.messages:
             )
 
 # ==========================================
-# GEMINI-STYLE BOTTOM DOCK (INPUT & DRAWER)
+# GEMINI-STYLE BOTTOM DOCK (COMPACT UI)
 # ==========================================
 bottom_area = st.bottom if hasattr(st, "bottom") else st.container()
 
 with bottom_area:
-    # 1. Expandable PDF Drawer (Slides open above typing pill)
+    # 1. Expandable PDF Drawer (Slides open above the typing bar)
     if st.session_state.show_uploader:
         with st.container():
             st.markdown(
                 """
                 <div class="doc-drawer">
-                    <span style="font-weight: 600; color: #4a148c; font-size: 14px;">
-                        📑 Attach Institutional Filing (10-K, Credit Indenture, CIM up to 200MB)
+                    <span style="font-weight: 600; color: #4a148c; font-size: 13.5px;">
+                        📑 Attach Institutional Filing (up to 200MB)
                     </span>
                 </div>
                 """,
@@ -277,24 +274,22 @@ with bottom_area:
 
     # 2. Attached Document Indicator Chip
     if st.session_state.active_pdf is not None and not st.session_state.show_uploader:
-        st.caption(f"📄 **Filing Loaded:** {st.session_state.active_pdf.name} ({(st.session_state.active_pdf.size)/(1024*1024):.1f} MB) — *Click ➕ to change or detach*")
+        st.caption(f"📄 **Filing Loaded:** {st.session_state.active_pdf.name} ({(st.session_state.active_pdf.size)/(1024*1024):.1f} MB) — *Click ➕ to change*")
 
-    # 3. Gemini '+' Attachment Button (Anchored & Centered inside the typing bar)
-    btn_state_class = "is-open" if st.session_state.show_uploader else ""
-    st.markdown(f'<div class="gemini-attach-wrapper {btn_state_class}">', unsafe_allow_html=True)
-    if st.button("➕", key="gemini_attach_btn", help="Attach 10-K, CIM, or Credit Agreement"):
+    # 3. Gemini '+' Attachment Button (Anchored by key into left edge)
+    btn_icon = "✕" if st.session_state.show_uploader else "➕"
+    if st.button(btn_icon, key="gemini_attach_btn", help="Attach 10-K, CIM, or Credit Agreement"):
         st.session_state.show_uploader = not st.session_state.show_uploader
         st.rerun()
-    st.markdown('</div>', unsafe_allow_html=True)
 
-    # 4. Bottom Chat Input
-    user_prompt = st.chat_input("Enter institutional query, model schedule, or analysis directive...")
+    # 4. Single-line compact placeholder (prevents multi-line expansion on mobile)
+    user_prompt = st.chat_input("Ask ORYN or attach filing...")
 
-    # 5. Professional AI Disclaimer
+    # 5. Clean AI Disclaimer
     st.markdown(
         """
         <div class="oryn-disclaimer">
-            ORYN is an AI and can make mistakes. Verify critical financial, regulatory, and corporate data.
+            ORYN is an AI and can make mistakes. Verify critical financial data.
         </div>
         """,
         unsafe_allow_html=True
