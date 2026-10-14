@@ -40,31 +40,113 @@ SECTION 7.01: CAPITAL STRUCTURE AT CLOSING
 - Unrestricted Cash on Balance Sheet: USD 35.0M
 - Restricted Collateral Cash: USD 18.5M"""
 
-# Clean, safe styling with no viewport-covering z-index rules
+# Clean Gemini-Style Bottom Dock CSS
 st.markdown(
     """
     <style>
-    /* Clean purple branding for the chat input */
-    div[data-testid="stChatInput"] {
-        border-radius: 20px !important;
-        border: 1.5px solid #d8b4fe !important;
+    /* Fixed bottom dock with subtle border and zero full-screen bleed */
+    div[data-testid="stBottom"] {
+        background-color: #ffffff !important;
+        border-top: 1px solid #f3e8ff !important;
+        box-shadow: 0 -4px 18px rgba(74, 20, 140, 0.05) !important;
+        padding-top: 8px !important;
+        padding-bottom: 6px !important;
     }
+
+    div[data-testid="stBottomBlockContainer"] {
+        position: relative !important;
+        padding-bottom: 0px !important;
+    }
+
+    /* Slim Gemini-style chat input pill */
+    div[data-testid="stChatInput"] {
+        border-radius: 24px !important;
+        background-color: #ffffff !important;
+        border: 1.5px solid #d8b4fe !important;
+        box-shadow: 0 2px 10px rgba(74, 20, 140, 0.07) !important;
+        min-height: 44px !important;
+        max-height: 44px !important;
+        height: 44px !important;
+        padding: 0 4px !important;
+        transition: box-shadow 0.2s ease, border-color 0.2s ease !important;
+    }
+
     div[data-testid="stChatInput"]:focus-within {
         border-color: #7b1fa2 !important;
-        box-shadow: 0 0 10px rgba(123, 31, 162, 0.2) !important;
+        box-shadow: 0 4px 16px rgba(74, 20, 140, 0.14) !important;
     }
+
+    /* Indent textarea so text does not collide with the '+' button */
+    div[data-testid="stChatInput"] textarea {
+        padding-left: 48px !important;
+        padding-right: 40px !important;
+        padding-top: 10px !important;
+        padding-bottom: 10px !important;
+        min-height: 42px !important;
+        max-height: 42px !important;
+        height: 42px !important;
+        font-size: 14px !important;
+        line-height: 22px !important;
+        resize: none !important;
+        box-sizing: border-box !important;
+        overflow: hidden !important;
+    }
+
+    /* Circular Gemini '+' button pinned inside the chat input pill */
+    .st-key-gemini_attach_btn {
+        position: absolute !important;
+        left: 18px !important;
+        bottom: 28px !important;
+        z-index: 10 !important;
+        width: 32px !important;
+        height: 32px !important;
+        margin: 0 !important;
+        padding: 0 !important;
+    }
+
+    .st-key-gemini_attach_btn button {
+        border-radius: 50% !important;
+        width: 32px !important;
+        height: 32px !important;
+        min-height: 32px !important;
+        max-height: 32px !important;
+        border: 1.5px solid #d8b4fe !important;
+        background-color: #faf5ff !important;
+        color: #4a148c !important;
+        font-size: 16px !important;
+        font-weight: 700 !important;
+        line-height: 1 !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        padding: 0 !important;
+        margin: 0 !important;
+        box-shadow: 0 1px 4px rgba(74, 20, 140, 0.12) !important;
+        transition: all 0.2s ease !important;
+    }
+
+    .st-key-gemini_attach_btn button:hover {
+        background-color: #f3e8ff !important;
+        border-color: #7b1fa2 !important;
+        color: #7b1fa2 !important;
+        transform: scale(1.05);
+    }
+
     .doc-drawer {
         background-color: #faf5ff;
         border: 1px solid #d8b4fe;
-        border-radius: 10px;
+        border-radius: 12px;
         padding: 10px 14px;
-        margin-bottom: 10px;
+        margin-bottom: 8px;
     }
+
     .oryn-disclaimer {
         text-align: center;
+        margin-top: 4px;
+        margin-bottom: 2px;
         font-size: 11px;
         color: #8e8ea0;
-        margin-top: 4px;
+        letter-spacing: 0.1px;
     }
     </style>
     """,
@@ -115,7 +197,7 @@ with st.sidebar:
 
     st.markdown("---")
 
-    # Clean Session Controls: Wipes conversation to renew tokens, keeps active document
+    # Reset Controls: Wipes chat turns to renew token capacity while PRESERVING attached document
     st.subheader("🔄 Session Control")
     if st.button("🗑️ Reset Chat (Renew Tokens)", use_container_width=True):
         st.session_state.messages = []
@@ -166,79 +248,90 @@ for message in st.session_state.messages:
             )
 
 # ==========================================
-# ATTACHMENT CONTROLS & DRAWER
+# GEMINI-STYLE BOTTOM DOCK
 # ==========================================
-# Filing Indicator Badge
-if st.session_state.active_pdf is not None:
-    c_badge, c_detach = st.columns([6, 1])
-    with c_badge:
-        p_text = st.session_state.active_pdf.get("preview", "")
-        c_count = st.session_state.active_pdf.get("chars", 0)
-        if c_count < 100:
-            st.warning(f"⚠️ **Loaded:** {st.session_state.active_pdf['name']} ({c_count} chars) — *File appears empty!*")
-        else:
-            st.info(f"📄 **Filing Loaded:** {st.session_state.active_pdf['name']} ({c_count:,} chars) • *Preview:* \"{p_text}...\"")
-    with c_detach:
-        if st.button("✕", help="Detach filing"):
-            st.session_state.active_pdf = None
-            st.rerun()
+bottom_area = st.bottom if hasattr(st, "bottom") else st.container()
 
-# Attachment Drawer Toggle
-col_btn, _ = st.columns([1, 5])
-with col_btn:
-    btn_label = "✕ Close Attachment Panel" if st.session_state.show_uploader else "📎 Attach Filing / Document"
-    if st.button(btn_label):
+with bottom_area:
+    # 1. Expandable PDF Drawer (Preserves raw in-memory bytes)
+    if st.session_state.show_uploader:
+        with st.container():
+            st.markdown(
+                """
+                <div class="doc-drawer">
+                    <span style="font-weight: 600; color: #4a148c; font-size: 13px;">
+                        📑 Attach Institutional Filing (10-K, CIM, Credit Agreement up to 200MB)
+                    </span>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+            col_up, col_preset = st.columns([3, 2])
+            with col_up:
+                uploaded_file = st.file_uploader(
+                    "Upload PDF",
+                    type=["pdf"],
+                    label_visibility="collapsed",
+                    help="PDF filings are indexed dynamically."
+                )
+                if uploaded_file is not None:
+                    extracted_text, p_cnt, c_cnt = agent.extract_pdf_document_text(uploaded_file.getvalue())
+                    preview = extracted_text.replace("\n", " ").strip()[:90] if extracted_text else "No text found"
+                    st.session_state.active_pdf = {
+                        "name": uploaded_file.name,
+                        "size": uploaded_file.size,
+                        "data": uploaded_file.getvalue(),
+                        "preview": preview,
+                        "chars": c_cnt
+                    }
+                    st.session_state.show_uploader = False
+                    st.rerun()
+
+            with col_preset:
+                if st.button("⚡ Load Apex Credit Agreement", help="Load the benchmark agreement directly into memory"):
+                    st.session_state.active_pdf = {
+                        "name": "Apex_Credit_Agreement_Benchmark.txt",
+                        "size": len(BENCHMARK_APEX_AGREEMENT.encode("utf-8")),
+                        "text": BENCHMARK_APEX_AGREEMENT,
+                        "preview": "CONFIDENTIAL CREDIT AGREEMENT & INDENTURE BORROWER: APEX LOGISTICS HOLDINGS INC...",
+                        "chars": len(BENCHMARK_APEX_AGREEMENT)
+                    }
+                    st.session_state.show_uploader = False
+                    st.rerun()
+
+    # 2. Compact Attached Filing Chip
+    if st.session_state.active_pdf is not None and not st.session_state.show_uploader:
+        c_badge, c_detach = st.columns([6, 1])
+        with c_badge:
+            p_text = st.session_state.active_pdf.get("preview", "")
+            c_count = st.session_state.active_pdf.get("chars", 0)
+            if c_count < 100:
+                st.warning(f"⚠️ **Loaded:** {st.session_state.active_pdf['name']} ({c_count} chars) — *File appears empty!*")
+            else:
+                st.info(f"📄 **Filing Loaded:** {st.session_state.active_pdf['name']} ({c_count:,} chars) • *Preview:* \"{p_text}...\"")
+        with c_detach:
+            if st.button("✕", help="Detach filing"):
+                st.session_state.active_pdf = None
+                st.rerun()
+
+    # 3. Gemini '+' Attachment Button (Clean circular pill on the left)
+    btn_icon = "✕" if st.session_state.show_uploader else "➕"
+    if st.button(btn_icon, key="gemini_attach_btn", help="Attach 10-K, CIM, or Credit Agreement"):
         st.session_state.show_uploader = not st.session_state.show_uploader
         st.rerun()
 
-if st.session_state.show_uploader:
-    with st.container():
-        st.markdown(
-            """
-            <div class="doc-drawer">
-                <span style="font-weight: 600; color: #4a148c; font-size: 13px;">
-                    📑 Attach Institutional Filing (10-K, CIM, Credit Agreement up to 200MB)
-                </span>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-        col_up, col_preset = st.columns([3, 2])
-        with col_up:
-            uploaded_file = st.file_uploader(
-                "Upload PDF",
-                type=["pdf"],
-                label_visibility="collapsed",
-                help="PDF filings are indexed dynamically."
-            )
-            if uploaded_file is not None:
-                extracted_text, p_cnt, c_cnt = agent.extract_pdf_document_text(uploaded_file.getvalue())
-                preview = extracted_text.replace("\n", " ").strip()[:90] if extracted_text else "No text found"
-                st.session_state.active_pdf = {
-                    "name": uploaded_file.name,
-                    "size": uploaded_file.size,
-                    "data": uploaded_file.getvalue(),
-                    "preview": preview,
-                    "chars": c_cnt
-                }
-                st.session_state.show_uploader = False
-                st.rerun()
+    # 4. Slim Chat Input Bar
+    user_prompt = st.chat_input("Ask ORYN or attach filing...")
 
-        with col_preset:
-            if st.button("⚡ Load Apex Credit Agreement", help="Load the benchmark agreement directly into memory"):
-                st.session_state.active_pdf = {
-                    "name": "Apex_Credit_Agreement_Benchmark.txt",
-                    "size": len(BENCHMARK_APEX_AGREEMENT.encode("utf-8")),
-                    "text": BENCHMARK_APEX_AGREEMENT,
-                    "preview": "CONFIDENTIAL CREDIT AGREEMENT & INDENTURE BORROWER: APEX LOGISTICS HOLDINGS INC...",
-                    "chars": len(BENCHMARK_APEX_AGREEMENT)
-                }
-                st.session_state.show_uploader = False
-                st.rerun()
-
-# User Input
-user_prompt = st.chat_input("Ask ORYN or run financial analysis...")
-st.markdown('<div class="oryn-disclaimer">ORYN is an AI and can make mistakes. Verify critical financial data.</div>', unsafe_allow_html=True)
+    # 5. Clean AI Disclaimer
+    st.markdown(
+        """
+        <div class="oryn-disclaimer">
+            ORYN is an AI and can make mistakes. Verify critical financial data.
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
 
 # ==========================================
 # AGENT EXECUTION
