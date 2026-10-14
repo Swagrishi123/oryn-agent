@@ -98,10 +98,10 @@ KNOWN_ENTITIES = {
     "tesla": "TSLA"
 }
 
-def extract_pdf_document_text(uploaded_payload, query: str = "", max_chars: int = 25000) -> str:
-    """Bulletproof, self-contained PDF extractor handling raw byte bundles, files, or streams."""
+def extract_pdf_document_text(uploaded_payload, query: str = "", max_chars: int = 25000) -> tuple[str, int, int]:
+    """Extracts text from raw bytes, streams, or dict buffers. Returns (text, page_count, char_count)."""
     if uploaded_payload is None:
-        return ""
+        return "", 0, 0
 
     try:
         try:
@@ -110,7 +110,7 @@ def extract_pdf_document_text(uploaded_payload, query: str = "", max_chars: int 
             try:
                 from PyPDF2 import PdfReader
             except ImportError:
-                return "⚠️ [PDF Engine Notice]: 'pypdf' package is initializing in the runtime."
+                return "⚠️ [PDF Error]: Neither 'pypdf' nor 'PyPDF2' is available in the environment.", 0, 0
 
         raw_bytes = None
         if isinstance(uploaded_payload, dict):
@@ -124,12 +124,12 @@ def extract_pdf_document_text(uploaded_payload, query: str = "", max_chars: int 
             raw_bytes = uploaded_payload.read()
 
         if not raw_bytes or len(raw_bytes) == 0:
-            return ""
+            return "", 0, 0
 
         reader = PdfReader(io.BytesIO(raw_bytes))
         total_pages = len(reader.pages)
         if total_pages == 0:
-            return ""
+            return "", 0, 0
 
         extracted_pages = []
         for idx in range(total_pages):
@@ -141,13 +141,14 @@ def extract_pdf_document_text(uploaded_payload, query: str = "", max_chars: int 
                 continue
 
         if not extracted_pages:
-            return ""
+            return "", total_pages, 0
 
-        # Short filings (<= 8 pages) - provide full document verbatim
+        # Short filings (<= 8 pages) - include all pages
         if len(extracted_pages) <= 8:
-            return "\n\n".join([f"--- [PAGE {p_num}] ---\n{p_txt}" for p_num, p_txt in extracted_pages])
+            full_text = "\n\n".join([f"--- [PAGE {p_num}] ---\n{p_txt}" for p_num, p_txt in extracted_pages])
+            return full_text, len(extracted_pages), len(full_text)
 
-        # Large filings (10-K, 100+ pages) - score and extract most relevant sections
+        # Large filings (10-K, 100+ pages) - score and slice by query relevance
         if query and len(query.strip()) > 3:
             tokens = [w.lower() for w in re.findall(r'\b[a-zA-Z]{3,}\b', query) if w.lower() not in {"what", "show", "tell", "from", "with", "this"}]
             ranked = []
@@ -163,7 +164,8 @@ def extract_pdf_document_text(uploaded_payload, query: str = "", max_chars: int 
                     break
                 selected.append(f"--- [PAGE {p_num}] ---\n{p_txt}")
                 curr_len += len(p_txt)
-            return "\n\n".join(selected)
+            final_text = "\n\n".join(selected)
+            return final_text, len(extracted_pages), len(final_text)
 
         combined = []
         curr_len = 0
@@ -172,10 +174,11 @@ def extract_pdf_document_text(uploaded_payload, query: str = "", max_chars: int 
                 break
             combined.append(f"--- [PAGE {p_num}] ---\n{p_txt}")
             curr_len += len(p_txt)
-        return "\n\n".join(combined)
+        final_text = "\n\n".join(combined)
+        return final_text, len(extracted_pages), len(final_text)
 
     except Exception as e:
-        return f"⚠️ [PDF Parsing Warning]: {str(e)}"
+        return f"⚠️ [PDF Parsing Warning]: {str(e)}", 0, 0
 
 def extract_and_fetch_live_data(prompt: str, status_callback=None) -> str:
     injected_context = []
@@ -245,23 +248,13 @@ def sanitize_report_formatting(text: str) -> str:
     if not text or not text.strip():
         return "No analysis generated. Please check your query or filing input."
 
-    # 1. If Groq wrapped the whole answer inside a markdown code fence, unwrap it cleanly
     cleaned = re.sub(r'^```(?:markdown|text)?\s*\n', '', text.strip(), flags=re.IGNORECASE)
     cleaned = re.sub(r'\n```\s*$', '', cleaned.strip())
-
-    # 2. Strip bracketed echo tags at the beginning (e.g., [ORYN REPORT])
-    cleaned = re.sub(r'^\[(?:ORYN REPORT|REPORT|ANALYSIS|QUANTITATIVE ANALYSIS)\]:?\s*', '', cleaned, flags=re.IGNORECASE)
-
-    # 3. Remove robotic introductory filler phrases if present at the start
+    cleaned = re.sub(r'^\[(?:ORYN REPORT\vert{}REPORT\vert{}ANALYSIS\vert{}QUANTITATIVE ANALYSIS)\]:?\s*', '', cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r'(?i)^(?:based on the (?:provided|available|attached) (?:information|data|filing|credit agreement)[,\s]*\n?)+', '', cleaned)
-
-    # 4. Convert isolated dollar signs before numbers to 'USD ' to prevent Streamlit LaTeX rendering bugs
     cleaned = re.sub(r'\$\s*([0-9])', r'USD \1', cleaned)
-
-    # 5. Fix table row spacing if pipes are jammed together
     cleaned = re.sub(r'\|\s*\|', '|\n|', cleaned)
 
-    # Bulletproof Safety: If sanitization somehow removed the text, ALWAYS return original text
     if not cleaned.strip():
         return text.strip()
 
@@ -493,13 +486,18 @@ def run_analyst_agent(
         briefing_text, plot_bytes, excel_bytes = generate_deterministic_dcf_artifacts(user_input)
         return sanitize_report_formatting(briefing_text), plot_bytes, excel_bytes, time.perf_counter() - start_time
 
-    # 1. Ingest PDF Document if attached (Strict Grounding)
+    # 1. Document Extraction & Guardrail
     pdf_context = ""
+    is_doc_query = any(k in user_input.lower() for k in ["attached", "credit agreement", "indenture", "filing", "section 1.01", "section 6.02"])
+
     if uploaded_pdf is not None:
         if status_callback:
             status_callback("info", "Extracting institutional filing sections...")
-        pdf_text = extract_pdf_document_text(uploaded_pdf, query=user_input)
+        pdf_text, p_count, c_count = extract_pdf_document_text(uploaded_pdf, query=user_input)
+
         if pdf_text and not pdf_text.startswith("⚠️"):
+            if status_callback:
+                status_callback("info", f"Extracted {p_count} page(s) ({c_count:,} characters) from document.")
             pdf_context = (
                 f"[OFFICIAL FINANCIAL FILING DOCUMENT ATTACHED]:\n"
                 f"\"\"\"\n{pdf_text}\n\"\"\"\n\n"
@@ -508,7 +506,21 @@ def run_analyst_agent(
                 f"exact numbers, sections, and definitions in this filing. Do NOT ask for additional figures.\n\n"
             )
         elif pdf_text:
-            pdf_context = f"\n\n{pdf_text}\n\n"
+            return pdf_text, None, None, time.perf_counter() - start_time
+        else:
+            return (
+                "⚠️ **Document Extraction Error**: The attached file contains no readable text. "
+                "If it is a scanned document, please ensure it has an OCR selectable text layer.",
+                None, None, time.perf_counter() - start_time
+            )
+    elif is_doc_query:
+        # User asked about an attached document, but active_pdf is None
+        return (
+            "⚠️ **No Filing Attached**: You requested an analysis based on an attached Credit Agreement, "
+            "but no document is currently loaded in the session. Click the **`➕` button** inside the typing bar "
+            "to attach your PDF document, then re-send your query.",
+            None, None, time.perf_counter() - start_time
+        )
 
     # 2. Extract live market exchange data if requested
     context_data = extract_and_fetch_live_data(user_input, status_callback=status_callback)
