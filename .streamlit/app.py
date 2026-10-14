@@ -194,28 +194,21 @@ with st.sidebar:
 
     st.markdown("---")
 
-    # Reset Controls
+    # Reset Controls (Issue 2 Fixed: Retains document, completely renews token budget)
     st.subheader("🔄 Session Control")
-    vault_count = len(st.session_state.session_vault)
-    st.caption(f"Memory Vault: **{vault_count}/3 sessions** preserved across resets.")
-
-    if st.button("🗑️ Reset Chat Screen", use_container_width=True):
-        if st.session_state.messages:
-            st.session_state.session_vault.append(list(st.session_state.messages))
-            if len(st.session_state.session_vault) > 3:
-                st.session_state.session_vault.pop(0)
+    if st.button("🗑️ Reset Chat (Renew Tokens)", use_container_width=True):
         st.session_state.messages = []
+        st.session_state.session_vault = []  # Clears old corrupted conversation memory
+        st.session_state.show_uploader = False
+        # st.session_state.active_pdf is PRESERVED so your document stays ready
+        st.rerun()
+
+    if st.button("Purge All (Including Document)", use_container_width=True):
+        st.session_state.messages = []
+        st.session_state.session_vault = []
         st.session_state.active_pdf = None
         st.session_state.show_uploader = False
         st.rerun()
-
-    if st.session_state.session_vault:
-        if st.button("Purge All Vault Memory", use_container_width=True):
-            st.session_state.session_vault = []
-            st.session_state.messages = []
-            st.session_state.active_pdf = None
-            st.session_state.show_uploader = False
-            st.rerun()
 
 # ==========================================
 # MAIN INTERACTION PANEL
@@ -280,7 +273,6 @@ with bottom_area:
                     help="Dense filings up to 200MB are indexed dynamically."
                 )
                 if uploaded_file is not None:
-                    # Extract text preview immediately to verify content
                     extracted_text, p_cnt, c_cnt = agent.extract_pdf_document_text(uploaded_file.getvalue())
                     preview = extracted_text.replace("\n", " ").strip()[:90] if extracted_text else "No text found"
                     st.session_state.active_pdf = {
