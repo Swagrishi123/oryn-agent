@@ -99,9 +99,14 @@ KNOWN_ENTITIES = {
 }
 
 def extract_pdf_document_text(uploaded_payload, query: str = "", max_chars: int = 25000) -> tuple[str, int, int]:
-    """Reliable, self-contained PDF extractor handling raw byte bundles, files, or streams."""
+    """Reliable, self-contained PDF extractor handling raw byte bundles, files, strings, or streams."""
     if uploaded_payload is None:
         return "", 0, 0
+
+    # If already passed as plain text or dictionary with direct text
+    if isinstance(uploaded_payload, dict) and "text" in uploaded_payload:
+        txt = str(uploaded_payload["text"]).strip()
+        return txt, 1, len(txt)
 
     try:
         from pypdf import PdfReader
@@ -143,7 +148,6 @@ def extract_pdf_document_text(uploaded_payload, query: str = "", max_chars: int 
         if not extracted_pages:
             return "⚠️ [PDF Error]: Document contains no selectable text (scanned image).", total_pages, 0
 
-        # Consistent list comprehension avoiding variable mismatch
         full_text = "\n\n".join([f"--- [PAGE {p_num}] ---\n{p_txt}" for p_num, p_txt in extracted_pages])
         return full_text, len(extracted_pages), len(full_text)
 
@@ -465,6 +469,17 @@ def run_analyst_agent(
 
         if pdf_text.startswith("⚠️"):
             return pdf_text, None, None, time.perf_counter() - start_time
+
+        # Safeguard: Flag empty or near-empty PDFs
+        if c_count < 100:
+            doc_name = uploaded_pdf.get("name", "Document") if isinstance(uploaded_pdf, dict) else "Document"
+            err_msg = (
+                f"⚠️ **Incomplete / Empty Filing**: The attached file (`{doc_name}`) contains only {c_count} characters:\n"
+                f"> *\"{pdf_text[:120]}\"*\n\n"
+                f"It does not contain the required credit agreement covenants or financial figures. "
+                f"Please ensure you attach a PDF containing the actual agreement text, or use the benchmark button in the `➕` drawer."
+            )
+            return err_msg, None, None, time.perf_counter() - start_time
 
         if status_callback:
             status_callback("info", f"Extracted {p_count} page(s) ({c_count:,} characters) from document.")
