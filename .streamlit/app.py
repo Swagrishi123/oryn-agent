@@ -40,7 +40,7 @@ SECTION 7.01: CAPITAL STRUCTURE AT CLOSING
 - Unrestricted Cash on Balance Sheet: USD 35.0M
 - Restricted Collateral Cash: USD 18.5M"""
 
-# Custom CSS: Solid Opaque Bottom Dock (Zero Text Bleed-Through) + Slim Gemini Chat Pill
+# Custom CSS: Solid Opaque Bottom Dock + Slim Gemini Chat Pill
 st.markdown(
     """
     <style>
@@ -194,16 +194,16 @@ with st.sidebar:
 
     st.markdown("---")
 
-    # Reset Controls (Issue 2 Fixed: Retains document, completely renews token budget)
+    # Clean Reset: Renews Token Capacity while PRESERVING Document
     st.subheader("🔄 Session Control")
     if st.button("🗑️ Reset Chat (Renew Tokens)", use_container_width=True):
         st.session_state.messages = []
-        st.session_state.session_vault = []  # Clears old corrupted conversation memory
+        st.session_state.session_vault = []
         st.session_state.show_uploader = False
-        # st.session_state.active_pdf is PRESERVED so your document stays ready
+        # Document is preserved in memory
         st.rerun()
 
-    if st.button("Purge All (Including Document)", use_container_width=True):
+    if st.button("Purge Document & All Memory", use_container_width=True):
         st.session_state.messages = []
         st.session_state.session_vault = []
         st.session_state.active_pdf = None
@@ -230,7 +230,6 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-# Render active chat history
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
@@ -251,7 +250,6 @@ for message in st.session_state.messages:
 bottom_area = st.bottom if hasattr(st, "bottom") else st.container()
 
 with bottom_area:
-    # 1. Expandable PDF Drawer (Preserves raw in-memory bytes)
     if st.session_state.show_uploader:
         with st.container():
             st.markdown(
@@ -297,7 +295,7 @@ with bottom_area:
                     st.session_state.show_uploader = False
                     st.rerun()
 
-    # 2. Compact Attached Filing Chip with Live Character Inspector
+    # Compact Attached Filing Chip
     if st.session_state.active_pdf is not None and not st.session_state.show_uploader:
         c_badge, c_detach = st.columns([6, 1])
         with c_badge:
@@ -312,16 +310,13 @@ with bottom_area:
                 st.session_state.active_pdf = None
                 st.rerun()
 
-    # 3. Gemini '+' Attachment Button
     btn_icon = "✕" if st.session_state.show_uploader else "➕"
     if st.button(btn_icon, key="gemini_attach_btn", help="Attach 10-K, CIM, or Credit Agreement"):
         st.session_state.show_uploader = not st.session_state.show_uploader
         st.rerun()
 
-    # 4. Slim Chat Input Bar
     user_prompt = st.chat_input("Ask ORYN or attach filing...")
 
-    # 5. Clean AI Disclaimer
     st.markdown(
         """
         <div class="oryn-disclaimer">
