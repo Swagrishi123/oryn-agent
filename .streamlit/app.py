@@ -1,233 +1,209 @@
 import streamlit as st
-import io
-import re
-import base64
-import datetime
-import importlib
 import sys
 
-# Ensure clean reload of both tools and agent from disk
-for mod_name in ["tools", "agent"]:
-    if mod_name in sys.modules:
-        try:
-            importlib.reload(sys.modules[mod_name])
-        except Exception:
-            pass
-
+# Ensure .streamlit modules are importable
+sys.path.append(".streamlit")
 import agent
-from agent import run_analyst_agent, sanitize_report_formatting
 
-# --- Page Configuration ---
 st.set_page_config(
-    page_title="ORYN Analyst — Autonomous Intelligence",
-    page_icon="✦",
+    page_title="ORYN Analyst | Institutional BFSI Quantitative Agent",
+    page_icon="🏛️",
     layout="wide",
-    initial_sidebar_state="collapsed"
+    initial_sidebar_state="expanded"
 )
 
-# --- Safe Secrets Retrieval ---
-default_api_key = ""
-try:
-    if "GROQ_API_KEY" in st.secrets:
-        default_api_key = st.secrets["GROQ_API_KEY"]
-except Exception:
-    default_api_key = ""
+# Custom CSS for Gemini-style rotating '+' attachment button
+st.markdown(
+    """
+    <style>
+    /* Styling the attachment '+' button */
+    div[data-testid="stButton"] button.attach-btn {
+        border-radius: 50% !important;
+        width: 44px !important;
+        height: 44px !important;
+        font-size: 22px !important;
+        font-weight: bold !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        border: 1px solid #4a148c !important;
+        background-color: #faf5ff !important;
+        color: #4a148c !important;
+        transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.2s ease !important;
+        padding: 0 !important;
+        line-height: 1 !important;
+    }
+    div[data-testid="stButton"] button.attach-btn:hover {
+        background-color: #f3e8ff !important;
+        border-color: #7b1fa2 !important;
+    }
+    /* Rotate 45 degrees into an 'X' when active */
+    .btn-rotated button {
+        transform: rotate(45deg) !important;
+        background-color: #4a148c !important;
+        color: #ffffff !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
 
-# --- State Initialization ---
+# Initialize Session State
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-if "api_key" not in st.session_state:
-    st.session_state.api_key = default_api_key
+if "session_vault" not in st.session_state:
+    st.session_state.session_vault = []
 
-# --- Header ---
-col_title, col_reset = st.columns([5, 1])
-with col_title:
-    st.markdown("<h1 style='color: #4a148c; margin-bottom: 0;'>✦ ORYN ANALYST</h1>", unsafe_allow_html=True)
-    st.markdown("<p style='color: #7b1fa2; font-weight: 500; margin-top: 0;'>Institutional BFSI Research • Financial Modeling • Quantitative Analysis</p>", unsafe_allow_html=True)
-with col_reset:
-    st.write("")
-    if st.button("🗑️ Reset", use_container_width=True, help="Clear conversation"):
+if "show_uploader" not in st.session_state:
+    st.session_state.show_uploader = False
+
+if "active_pdf" not in st.session_state:
+    st.session_state.active_pdf = None
+
+# ==========================================
+# SIDEBAR (RESET & SYSTEM CONFIG ONLY)
+# ==========================================
+with st.sidebar:
+    st.title("🏛️ ORYN Analyst")
+    st.caption("Institutional BFSI Quantitative Intelligence")
+    st.markdown("---")
+
+    # API Key & Engine Config
+    groq_api_key = st.text_input(
+        "Groq API Key",
+        type="password",
+        value=st.secrets.get("GROQ_API_KEY", ""),
+        help="Enter your Groq API key (starts with gsk_)"
+    )
+
+    selected_model = st.selectbox(
+        "Inference Engine",
+        options=["llama-3.3-70b-versatile", "llama-3.1-8b-instant"],
+        index=0
+    )
+
+    st.markdown("---")
+
+    # Reset Controls
+    st.subheader("🔄 Session Control")
+    vault_count = len(st.session_state.session_vault)
+    st.caption(f"Memory Vault: **{vault_count}/3 sessions** preserved across resets.")
+
+    if st.button("🗑️ Reset Chat Screen", use_container_width=True):
+        if st.session_state.messages:
+            st.session_state.session_vault.append(list(st.session_state.messages))
+            if len(st.session_state.session_vault) > 3:
+                st.session_state.session_vault.pop(0)
         st.session_state.messages = []
+        st.session_state.active_pdf = None
+        st.session_state.show_uploader = False
         st.rerun()
 
-st.divider()
+    if st.session_state.session_vault:
+        if st.button("Purge All Vault Memory", use_container_width=True):
+            st.session_state.session_vault = []
+            st.session_state.messages = []
+            st.session_state.active_pdf = None
+            st.session_state.show_uploader = False
+            st.rerun()
 
-# --- Sidebar Controls ---
-with st.sidebar:
-    st.header("⚙️ Analyst Controls")
-    key_input = st.text_input(
-        "Groq API Key:",
-        value=st.session_state.api_key,
-        type="password",
-        help="API Key for Groq execution"
-    )
-    if key_input:
-        st.session_state.api_key = key_input.strip()
+# ==========================================
+# MAIN INTERACTION PANEL
+# ==========================================
+st.markdown("### Institutional Quantitative Workspace")
 
-    active_model = st.selectbox(
-        "Reasoning Engine:",
-        options=[
-            "llama-3.3-70b-versatile",
-            "llama-3.1-8b-instant",
-            "llama3-70b-8192",
-            "llama3-8b-8192"
-        ],
-        index=0,
-        help="Institutional reasoning engines on Groq"
-    )
-    hitl_enabled = st.toggle("🛡️ HITL Safety Guardrails", value=True)
-
-# --- Canonical UI Cleaner ---
-def clean_for_ui(text: str) -> str:
-    raw_script_pattern = r"(?:import\s+(?:matplotlib|pandas|numpy|plt|yf)[\s\S]*?(?:plt\.show\(\)|plt\.tight_layout\(\)|plt\.close\(\)))"
-    text = re.sub(raw_script_pattern, "\n*(Visual chart artifact rendered below)*\n", text)
-    code_block_pattern = r"```(?:python)?\s*(?:import\s+(?:matplotlib|plt)|plt\.)[\s\S]*?```"
-    text = re.sub(code_block_pattern, "\n*(Visual chart artifact rendered below)*\n", text)
-    text = text.replace("</br>", " ").replace("<br>", " ")
-    text = re.sub(r"\[Image:\s*[^\]]+\]", "", text)
-    text = re.sub(r"\*\s+\*", "", text)
-    text = text.replace(r"\approx", "≈").replace(r"\times", "×")
-    return sanitize_report_formatting(text)
-
-def build_html_report(text: str, plot_bytes: bytes | None) -> str:
-    current_date = datetime.datetime.now().strftime("%B %d, %Y • %H:%M UTC")
-    img_html = ""
-    if plot_bytes:
-        b64 = base64.b64encode(plot_bytes).decode('utf-8')
-        img_html = f"""
-        <div style="background:#faf5ff; border:1px solid #e9d5ff; border-radius:12px; padding:20px; margin:24px 0; text-align:center;">
-            <div style="font-size:11px; font-weight:700; color:#7b1fa2; margin-bottom:10px; text-align:left;">VISUAL ARTIFACT</div>
-            <img src="data:image/png;base64,{b64}" style="max-width:100%; border-radius:8px;"/>
-        </div>
-        """
-    clean_text = clean_for_ui(text)
-    paragraphs = "".join([f"<p>{p.strip()}</p>" for p in clean_text.split("\n\n") if p.strip()])
-    return f"""<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="utf-8">
-    <title>ORYN Analyst Briefing</title>
-    <style>
-        body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f8fafc; color: #1e1b4b; padding: 30px 15px; margin: 0; }}
-        .card {{ max-width: 820px; margin: 0 auto; background: #ffffff; border-radius: 14px; border: 1px solid #e2e8f0; padding: 36px; }}
-        h1 {{ color: #4a148c; margin-top: 0; }}
-        .content {{ line-height: 1.6; font-size: 15px; }}
-    </style>
-</head>
-<body>
-    <div class="card">
-        <h1>ORYN Analyst — Executive Briefing</h1>
-        <div style="font-size:13px; color:#6b7280; margin-bottom: 24px;">Generated autonomously • {current_date}</div>
-        <div class="content">{img_html}{paragraphs}</div>
-    </div>
-</body>
-</html>"""
-
-def render_download_suite(text: str, plot_bytes: bytes | None, excel_bytes: bytes | None, key_prefix: str):
-    buttons = [
-        {
-            "label": "📥 Download Memo (.txt)",
-            "data": text,
-            "file_name": f"ORYN_Institutional_Memo_{key_prefix}.txt",
-            "mime": "text/plain"
-        },
-        {
-            "label": "📑 Download Report (.html)",
-            "data": build_html_report(text, plot_bytes),
-            "file_name": f"ORYN_Report_{key_prefix}.html",
-            "mime": "text/html"
-        }
-    ]
-    if plot_bytes:
-        buttons.append({
-            "label": "📊 Download Chart (.png)",
-            "data": plot_bytes,
-            "file_name": f"ORYN_Chart_{key_prefix}.png",
-            "mime": "image/png"
-        })
-    if excel_bytes:
-        buttons.append({
-            "label": "📗 Financial Model (.xlsx)",
-            "data": excel_bytes,
-            "file_name": f"ORYN_Model_{key_prefix}.xlsx",
-            "mime": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        })
-
-    cols = st.columns(len(buttons))
-    for i, btn in enumerate(buttons):
-        with cols[i]:
+# Render active chat history
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
+        if message.get("plot_bytes"):
+            st.image(message["plot_bytes"], caption="Quantitative Artifact")
+        if message.get("excel_bytes"):
             st.download_button(
-                label=btn["label"],
-                data=btn["data"],
-                file_name=btn["file_name"],
-                mime=btn["mime"],
-                key=f"dl_{key_prefix}_{i}",
-                use_container_width=True
+                label="📥 Download model.xlsx",
+                data=message["excel_bytes"],
+                file_name="model.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key=f"dl_{message.get('timestamp', 0)}"
             )
 
-# --- Render Chat History ---
-for idx, msg in enumerate(st.session_state.messages):
-    with st.chat_message(msg.get("role", "assistant")):
-        st.markdown(clean_for_ui(msg.get("content", "")), unsafe_allow_html=True)
-        if msg.get("image"):
-            st.image(msg["image"], caption="Generated Visual Artifact", use_container_width=True)
-        if msg.get("role") == "assistant":
-            render_download_suite(
-                text=msg.get("content", ""),
-                plot_bytes=msg.get("image"),
-                excel_bytes=msg.get("excel"),
-                key_prefix=f"hist_{idx}"
-            )
+# ==========================================
+# GEMINI-STYLE ATTACHMENT TRAY & CHAT BAR
+# ==========================================
+col_btn, col_badge = st.columns([1, 15])
 
-# --- User Input & Agent Orchestration ---
-user_input = st.chat_input("Ask ORYN Analyst...")
+with col_btn:
+    btn_active_class = "btn-rotated" if st.session_state.show_uploader else ""
+    st.markdown(f'<div class="{btn_active_class}">', unsafe_allow_html=True)
+    if st.button("➕", help="Attach 10-K, Credit Agreement, or CIM (up to 200MB)"):
+        st.session_state.show_uploader = not st.session_state.show_uploader
+        st.rerun()
+    st.markdown('</div>', unsafe_allow_html=True)
 
-if user_input:
-    st.session_state.messages.append({"role": "user", "content": user_input})
+with col_badge:
+    if st.session_state.active_pdf is not None:
+        c1, c2 = st.columns([4, 1])
+        with c1:
+            st.info(f"📄 **Attached Filing:** {st.session_state.active_pdf.name} ({(st.session_state.active_pdf.size)/(1024*1024):.1f} MB)")
+        with c2:
+            if st.button("Remove ✕", help="Detach this document"):
+                st.session_state.active_pdf = None
+                st.rerun()
+
+# Expandable Document Reader Tray
+if st.session_state.show_uploader:
+    with st.container(border=True):
+        st.markdown("**📑 Upload Institutional Filing (up to 200MB)**")
+        uploaded_file = st.file_uploader(
+            "Upload 10-K, CIM, or Indenture",
+            type=["pdf"],
+            label_visibility="collapsed",
+            help="Upload dense institutional filings up to 200MB. The engine indexes key sections dynamically."
+        )
+        if uploaded_file is not None:
+            st.session_state.active_pdf = uploaded_file
+            st.success(f"✅ Loaded: {uploaded_file.name} ({(uploaded_file.size)/(1024*1024):.1f} MB). You can now ask questions about this document below.")
+
+# Bottom Chat Input
+user_prompt = st.chat_input("Enter institutional query, model schedule, or analysis directive...")
+
+if user_prompt:
+    st.session_state.messages.append({"role": "user", "content": user_prompt})
     with st.chat_message("user"):
-        st.markdown(user_input)
+        st.markdown(user_prompt)
 
-    if not st.session_state.api_key:
-        with st.chat_message("assistant"):
-            st.error("Please enter your Groq API Key in the left sidebar to proceed.")
-    else:
-        with st.chat_message("assistant"):
-            status_container = st.status("🧠 ORYN Analyst is reasoning...", expanded=True)
+    with st.chat_message("assistant"):
+        status_box = st.status("Executing quantitative analysis...", expanded=False)
 
-            def status_callback(level: str, text: str):
-                if level == "warning":
-                    status_container.warning(text)
-                else:
-                    status_container.write(text)
+        def status_callback(status_type, message):
+            status_box.write(f"• {message}")
 
-            final_text, generated_plot, generated_excel, elapsed = run_analyst_agent(
-                user_input=user_input,
-                api_key=st.session_state.api_key,
-                selected_model=active_model,
-                hitl_enabled=hitl_enabled,
-                status_callback=status_callback
+        report, plot_bytes, excel_bytes, elapsed = agent.run_analyst_agent(
+            user_input=user_prompt,
+            api_key=groq_api_key,
+            selected_model=selected_model,
+            status_callback=status_callback,
+            uploaded_pdf=st.session_state.active_pdf
+        )
+
+        status_box.update(label=f"✅ Complete ({elapsed:.2f}s)", state="complete")
+        st.markdown(report)
+
+        if plot_bytes:
+            st.image(plot_bytes, caption="Valuation Artifact")
+        if excel_bytes:
+            st.download_button(
+                label="📥 Download model.xlsx",
+                data=excel_bytes,
+                file_name="model.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
 
-            status_container.update(label=f"✅ Complete ({elapsed:.2f}s)", state="complete", expanded=False)
-
-            clean_display_text = clean_for_ui(final_text)
-            st.markdown(clean_display_text, unsafe_allow_html=True)
-
-            if generated_plot:
-                st.image(generated_plot, caption="Generated Visual Artifact", use_container_width=True)
-
-            msg_idx = len(st.session_state.messages)
-            render_download_suite(
-                text=clean_display_text,
-                plot_bytes=generated_plot,
-                excel_bytes=generated_excel,
-                key_prefix=f"live_{msg_idx}"
-            )
-
-            st.session_state.messages.append({
-                "role": "assistant",
-                "content": clean_display_text,
-                "image": generated_plot,
-                "excel": generated_excel
-            })
+    st.session_state.messages.append({
+        "role": "assistant",
+        "content": report,
+        "plot_bytes": plot_bytes,
+        "excel_bytes": excel_bytes,
+        "timestamp": sys.float_info.max
+    })
