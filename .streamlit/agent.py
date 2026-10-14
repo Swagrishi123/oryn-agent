@@ -99,19 +99,19 @@ KNOWN_ENTITIES = {
 }
 
 def extract_pdf_document_text(uploaded_payload, query: str = "", max_chars: int = 25000) -> tuple[str, int, int]:
-    """Extracts text from raw bytes, streams, or dict buffers. Returns (text, page_count, char_count)."""
+    """Reliable, self-contained PDF extractor handling raw byte bundles, files, or streams."""
     if uploaded_payload is None:
         return "", 0, 0
 
     try:
+        from pypdf import PdfReader
+    except ImportError:
         try:
-            from pypdf import PdfReader
+            from PyPDF2 import PdfReader
         except ImportError:
-            try:
-                from PyPDF2 import PdfReader
-            except ImportError:
-                return "⚠️ [PDF Error]: Neither 'pypdf' nor 'PyPDF2' is available in the environment.", 0, 0
+            return "⚠️ [PDF Error]: 'pypdf' package is initializing in the runtime.", 0, 0
 
+    try:
         raw_bytes = None
         if isinstance(uploaded_payload, dict):
             raw_bytes = uploaded_payload.get("data", b"")
@@ -124,12 +124,12 @@ def extract_pdf_document_text(uploaded_payload, query: str = "", max_chars: int 
             raw_bytes = uploaded_payload.read()
 
         if not raw_bytes or len(raw_bytes) == 0:
-            return "", 0, 0
+            return "⚠️ [PDF Error]: Uploaded file contains 0 bytes.", 0, 0
 
         reader = PdfReader(io.BytesIO(raw_bytes))
         total_pages = len(reader.pages)
         if total_pages == 0:
-            return "", 0, 0
+            return "⚠️ [PDF Error]: Document has 0 pages.", 0, 0
 
         extracted_pages = []
         for idx in range(total_pages):
@@ -141,44 +141,14 @@ def extract_pdf_document_text(uploaded_payload, query: str = "", max_chars: int 
                 continue
 
         if not extracted_pages:
-            return "", total_pages, 0
+            return "⚠️ [PDF Error]: Document contains no selectable text (scanned image).", total_pages, 0
 
-        # Short filings (<= 8 pages) - include all pages
-        if len(extracted_pages) <= 8:
-            full_text = "\n\n".join([f"--- [PAGE {p_num}] ---\n{p_txt}" for p_num, p_txt in extracted_pages])
-            return full_text, len(extracted_pages), len(full_text)
-
-        # Large filings (10-K, 100+ pages) - score and slice by query relevance
-        if query and len(query.strip()) > 3:
-            tokens = [w.lower() for w in re.findall(r'\b[a-zA-Z]{3,}\b', query) if w.lower() not in {"what", "show", "tell", "from", "with", "this"}]
-            ranked = []
-            for p_num, p_txt in extracted_pages:
-                score = sum(p_txt.lower().count(t) for t in tokens)
-                ranked.append((score, p_num, p_txt))
-            ranked.sort(key=lambda x: x[0], reverse=True)
-
-            selected = []
-            curr_len = 0
-            for score, p_num, p_txt in ranked:
-                if curr_len + len(p_txt) > max_chars and selected:
-                    break
-                selected.append(f"--- [PAGE {p_num}] ---\n{p_txt}")
-                curr_len += len(p_txt)
-            final_text = "\n\n".join(selected)
-            return final_text, len(extracted_pages), len(final_text)
-
-        combined = []
-        curr_len = 0
-        for p_num, p_txt in extracted_pages[:15]:
-            if curr_len + len(p_txt) > max_chars:
-                break
-            combined.append(f"--- [PAGE {p_num}] ---\n{p_txt}")
-            curr_len += len(p_txt)
-        final_text = "\n\n".join(combined)
-        return final_text, len(extracted_pages), len(final_text)
+        # Consistent list comprehension avoiding variable mismatch
+        full_text = "\n\n".join([f"--- [PAGE {p_num}] ---\n{p_txt}" for p_num, p_txt in extracted_pages])
+        return full_text, len(extracted_pages), len(full_text)
 
     except Exception as e:
-        return f"⚠️ [PDF Parsing Warning]: {str(e)}", 0, 0
+        return f"⚠️ [PDF Parsing Error]: {str(e)}", 0, 0
 
 def extract_and_fetch_live_data(prompt: str, status_callback=None) -> str:
     injected_context = []
@@ -486,38 +456,30 @@ def run_analyst_agent(
         briefing_text, plot_bytes, excel_bytes = generate_deterministic_dcf_artifacts(user_input)
         return sanitize_report_formatting(briefing_text), plot_bytes, excel_bytes, time.perf_counter() - start_time
 
-    # 1. Document Extraction & Guardrail
+    # 1. Document Extraction & Active Grounding
     pdf_context = ""
-    is_doc_query = any(k in user_input.lower() for k in ["attached", "credit agreement", "indenture", "filing", "section 1.01", "section 6.02"])
-
     if uploaded_pdf is not None:
         if status_callback:
             status_callback("info", "Extracting institutional filing sections...")
         pdf_text, p_count, c_count = extract_pdf_document_text(uploaded_pdf, query=user_input)
 
-        if pdf_text and not pdf_text.startswith("⚠️"):
-            if status_callback:
-                status_callback("info", f"Extracted {p_count} page(s) ({c_count:,} characters) from document.")
-            pdf_context = (
-                f"[OFFICIAL FINANCIAL FILING DOCUMENT ATTACHED]:\n"
-                f"\"\"\"\n{pdf_text}\n\"\"\"\n\n"
-                f"CRITICAL DIRECTIVE: The user's query pertains directly to the document above. Perform all quantitative "
-                f"calculations, covenant compliance tests, and balance sheet waterfalls DIRECTLY and IMMEDIATELY using the "
-                f"exact numbers, sections, and definitions in this filing. Do NOT ask for additional figures.\n\n"
-            )
-        elif pdf_text:
+        if pdf_text.startswith("⚠️"):
             return pdf_text, None, None, time.perf_counter() - start_time
-        else:
-            return (
-                "⚠️ **Document Extraction Error**: The attached file contains no readable text. "
-                "If it is a scanned document, please ensure it has an OCR selectable text layer.",
-                None, None, time.perf_counter() - start_time
-            )
-    elif is_doc_query:
-        # User asked about an attached document, but active_pdf is None
+
+        if status_callback:
+            status_callback("info", f"Extracted {p_count} page(s) ({c_count:,} characters) from document.")
+
+        pdf_context = (
+            f"[OFFICIAL FINANCIAL FILING DOCUMENT ATTACHED]:\n"
+            f"\"\"\"\n{pdf_text}\n\"\"\"\n\n"
+            f"CRITICAL DIRECTIVE: The user's query pertains directly to the document above. Perform all quantitative "
+            f"calculations, covenant compliance tests, and balance sheet waterfalls DIRECTLY and IMMEDIATELY using the "
+            f"exact numbers, sections, and definitions in this filing. Do NOT ask for additional figures.\n\n"
+        )
+    elif any(k in user_input.lower() for k in ["attached", "credit agreement", "indenture", "filing"]):
         return (
-            "⚠️ **No Filing Attached**: You requested an analysis based on an attached Credit Agreement, "
-            "but no document is currently loaded in the session. Click the **`➕` button** inside the typing bar "
+            "⚠️ **No Filing Attached**: You requested an analysis based on an attached document, "
+            "but no document is currently loaded in this session. Click the **`➕` button** inside the typing bar "
             "to attach your PDF document, then re-send your query.",
             None, None, time.perf_counter() - start_time
         )
