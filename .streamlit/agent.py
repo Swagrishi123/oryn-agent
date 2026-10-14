@@ -10,22 +10,20 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from groq import Groq
 
-# Safely import functions from tools with module reload protection
+# Safely import market data tools with fallback protection
 try:
     if "tools" in sys.modules:
         importlib.reload(sys.modules["tools"])
     import tools
     tool_get_financial_data = getattr(tools, "tool_get_financial_data", lambda x: {"error": "unavailable"})
     dynamic_web_search = getattr(tools, "dynamic_web_search", lambda x: None)
-    parse_large_pdf = getattr(tools, "parse_large_pdf", lambda f, q="": None)
 except Exception:
     def tool_get_financial_data(x):
         return {"error": "unavailable"}
     def dynamic_web_search(x):
         return None
-    def parse_large_pdf(f, q=""):
-        return None
 
+# Blacklist of macro, ALM, FIG, and restructuring terms to prevent false-positive ticker lookups
 FINANCIAL_ACRONYMS_BLACKLIST = {
     "NIM", "ALM", "TCE", "AFS", "FIG", "BPS", "DIP", "LBO", "WACC", "DCF",
     "EBITDA", "FCF", "APR", "EV", "PE", "IRR", "CAGR", "ROE", "ROA", "ROIC",
@@ -43,8 +41,8 @@ SYSTEM_PROMPT = (
     "CRITICAL CONVERSATION & MEMORY VAULT PROTOCOL:\n"
     "1. DOCUMENT-FIRST QUANTITATIVE RIGOR: When institutional filing content is provided under [OFFICIAL FINANCIAL FILING DOCUMENT ATTACHED], "
     "perform all quantitative calculations, covenant compliance tests, and balance sheet waterfalls DIRECTLY and IMMEDIATELY using the "
-    "exact numbers, sections, and definitions in that filing text. Do not ask for further information or repeat instructions.\n"
-    "2. MULTI-TURN CONTINUITY ACROSS SESSIONS: Review ALL prior conversation turns and archived session history in the prompt. "
+    "exact numbers, sections, and definitions in that filing text. Do not ask for additional figures.\n"
+    "2. MULTI-TURN CONTINUITY ACROSS SESSIONS: Review ALL conversation turns and archived session history in your prompt. "
     "When a user asks to 're-run', 'sensitize', or 'modify' a previous calculation, retain ALL baseline parameters (EBITDA, purchase price, "
     "equity check, debt balances) from the prior prompt or session archive and ONLY adjust the requested variable.\n"
     "3. NO BRACKET TAGS OR ECHOING: NEVER output bracketed headers (e.g., [ORYN REPORT]). Begin directly with the analysis.\n"
@@ -99,6 +97,88 @@ KNOWN_ENTITIES = {
     "google": "GOOGL",
     "tesla": "TSLA"
 }
+
+def parse_large_pdf(uploaded_file, query: str = "", max_context_chars: int = 25000) -> str:
+    """Self-contained institutional PDF extraction engine handling up to 200MB filings."""
+    if uploaded_file is None:
+        return ""
+
+    try:
+        try:
+            from pypdf import PdfReader
+        except ImportError:
+            from PyPDF2 import PdfReader
+    except ImportError:
+        return "⚠️ [PDF Error]: Neither 'pypdf' nor 'PyPDF2' is installed in the environment."
+
+    try:
+        # 1. Unpack raw byte stream from any Streamlit format
+        if isinstance(uploaded_file, dict):
+            raw_bytes = uploaded_file.get("data", b"")
+        elif hasattr(uploaded_file, "getvalue"):
+            raw_bytes = uploaded_file.getvalue()
+        elif isinstance(uploaded_file, bytes):
+            raw_bytes = uploaded_file
+        elif hasattr(uploaded_file, "read"):
+            uploaded_file.seek(0)
+            raw_bytes = uploaded_file.read()
+        else:
+            return ""
+
+        if not raw_bytes or len(raw_bytes) == 0:
+            return ""
+
+        reader = PdfReader(io.BytesIO(raw_bytes))
+        total_pages = len(reader.pages)
+        if total_pages == 0:
+            return "⚠️ [PDF Error]: Document contains 0 pages."
+
+        page_texts = []
+        for idx in range(total_pages):
+            try:
+                txt = reader.pages[idx].extract_text() or ""
+                if txt.strip():
+                    page_texts.append((idx + 1, txt.strip()))
+            except Exception:
+                continue
+
+        if not page_texts:
+            return "⚠️ [PDF Error]: Document appears to be a scanned image with no selectable text."
+
+        # Short filings (<= 8 pages) - provide full document verbatim
+        if len(page_texts) <= 8:
+            return "\n\n".join([f"--- [PAGE {p_num}] ---\n{p_txt}" for p_num, p_txt in page_texts])
+
+        # Large filings (10-K, 100+ pages) - score and slice by relevance
+        if query and len(query.strip()) > 3:
+            q_tokens = [w.lower() for w in re.findall(r'\b[a-zA-Z]{3,}\b', query) if w.lower() not in {"what", "show", "tell", "from", "with", "this"}]
+            scored_pages = []
+            for p_num, p_txt in page_texts:
+                score = sum(p_txt.lower().count(t) for t in q_tokens)
+                scored_pages.append((score, p_num, p_txt))
+            scored_pages.sort(key=lambda x: x[0], reverse=True)
+
+            selected = []
+            curr_len = 0
+            for score, p_num, p_txt in scored_pages:
+                if curr_len + len(p_txt) > max_context_chars and selected:
+                    break
+                selected.append(f"--- [PAGE {p_num}] ---\n{p_txt}")
+                curr_len += len(p_txt)
+            return "\n\n".join(selected)
+
+        # Baseline overview
+        combined = []
+        curr_len = 0
+        for p_num, p_txt in page_texts[:15]:
+            if curr_len + len(p_txt) > max_context_chars:
+                break
+            combined.append(f"--- [PAGE {p_num}] ---\n{p_txt}")
+            curr_len += len(p_txt)
+        return "\n\n".join(combined)
+
+    except Exception as e:
+        return f"⚠️ [PDF Parsing Exception]: {str(e)}"
 
 def extract_and_fetch_live_data(prompt: str, status_callback=None) -> str:
     injected_context = []
@@ -309,10 +389,9 @@ def build_contextual_messages(user_input: str, system_prompt: str) -> list[dict]
                 if summary_lines:
                     vault_context.append(f"[ARCHIVED RUN #{s_idx + 1}]:\n" + "\n".join(summary_lines))
 
-        # 2. Recover active messages from current screen (excluding the current turn)
+        # 2. Recover active messages from current screen
         if "messages" in st.session_state and isinstance(st.session_state.messages, list):
             stored = st.session_state.messages
-            # Strip the very last turn if it was already appended by the UI
             candidates = stored[:-1] if (stored and stored[-1].get("role") == "user") else stored
             for m in candidates[-6:]:
                 role = m.get("role", "user")
