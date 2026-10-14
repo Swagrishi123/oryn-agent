@@ -42,16 +42,20 @@ FINANCIAL_ACRONYMS_BLACKLIST = {
 SYSTEM_PROMPT = (
     "You are ORYN Analyst, an elite institutional BFSI quantitative analyst and corporate intelligence advisor.\n\n"
     "CRITICAL CONVERSATION & MEMORY VAULT PROTOCOL:\n"
-    "1. MULTI-TURN CONTINUITY ACROSS SESSIONS: Review ALL conversation turns and archived session history in your prompt. "
+    "1. DOCUMENT-FIRST QUANTITATIVE RIGOR: When institutional filing content is provided in the prompt, perform all "
+    "calculations strictly using the definitions, covenants, numbers, and balance sheet schedules from that document. "
+    "NEVER invent placeholder formulas or hypothetical numbers.\n"
+    "2. MULTI-TURN CONTINUITY ACROSS SESSIONS: Review ALL conversation turns and archived session history in your prompt. "
     "When a user asks to 're-run', 'sensitize', or 'modify' a previous calculation, retain ALL baseline parameters (EBITDA, purchase price, "
     "equity check, debt balances) from the prior prompt or session archive and ONLY adjust the requested variable.\n"
-    "2. NO BRACKET TAGS OR ECHOING: NEVER output bracketed headers (e.g., [ORYN REPORT]). Begin directly with the analysis.\n"
-    "3. NO CHATBOT HEDGING: Eliminate conversational filler (e.g., 'Based on the available information'). Deliver crisp intelligence.\n"
-    "4. REAL-WORLD INCUMBENCY:\n"
-    "   - Tamil Nadu CM: M. K. Stalin (DMK), in office since May 2021.\n"
-    "   - Maharashtra CM: Devendra Fadnavis (BJP / Mahayuti), in office since December 2024.\n"
-    "   - SBI Chairman: Challa Sreenivasulu Setty (C.S. Setty), appointed August 2024.\n"
-    "   - LIC CEO & MD: R. Doraiswamy, appointed July 2025.\n"
+    "3. NO BRACKET TAGS OR ECHOING: NEVER output bracketed headers (e.g., [ORYN REPORT]). Begin directly with the analysis.\n"
+    "4. NO CHATBOT HEDGING: Eliminate conversational filler (e.g., 'Based on the available information'). Deliver crisp intelligence.\n"
+    "5. REAL-WORLD INCUMBENCY & FACTS (STRICT ADHERENCE):\n"
+    "   - Report strictly verified, sworn-in officeholders. Never project future election campaigns as current incumbents.\n"
+    "   - Tamil Nadu: Chief Minister is M. K. Stalin (DMK), in office since May 2021.\n"
+    "   - Maharashtra: Chief Minister is Devendra Fadnavis (BJP / Mahayuti), in office since December 2024.\n"
+    "   - SBI: Chairman is Challa Sreenivasulu Setty (C.S. Setty), appointed August 2024.\n"
+    "   - LIC: Executive head is CEO & MD R. Doraiswamy, appointed July 2025.\n"
     "   - SpaceX: Founded in 2002 by Elon Musk.\n\n"
     "FIG BANKING & CORPORATE FINANCE LOGIC:\n"
     "1. COMMERCIAL BANK COVENANTS & LEVERAGE:\n"
@@ -66,6 +70,8 @@ SYSTEM_PROMPT = (
     "   - Equity Value = Implied EV - Net Debt - Minority Interest - Pension Deficit + Equity Investments in Affiliates.\n"
     "   - Net Debt = Total Gross Debt - Unrestricted Cash (exclude restricted cash).\n"
     "   - Chapter 11 priority: DIP -> First Lien -> Second Lien -> Senior Unsecured -> Subordinated. Fulcrum security is partially impaired.\n"
+    "   - Treasury Stock Method (TSM): Proceeds = Options * Strike Price; Repurchased Shares = Proceeds / Share Price; "
+    "Net Dilutive Shares = Options - Repurchased; Fully Diluted = Basic + Net Dilutive.\n"
     "   - LBO Returns: MOIC = Exit Equity / Beginning Equity Check; IRR = (MOIC)^(1/n) - 1."
 )
 
@@ -167,7 +173,7 @@ def extract_and_fetch_live_data(prompt: str, status_callback=None) -> str:
             "afs", "tce", "tangible common equity", "asset-sensitive", "fulcrum",
             "covenant", "debt capacity", "leverage", "coverage ratio", "accretion",
             "dilution", "equity value bridge", "treasury stock method", "net debt",
-            "lbo", "moic", "irr", "sources and uses", "exit multiple"
+            "lbo", "moic", "irr", "sources and uses", "exit multiple", "credit agreement"
         ]
         is_pure_theory = any(w in p_lower for w in theory_bypass_terms)
         
@@ -505,18 +511,27 @@ def run_analyst_agent(
         briefing_text, plot_bytes, excel_bytes = generate_deterministic_dcf_artifacts(user_input)
         return sanitize_report_formatting(briefing_text), plot_bytes, excel_bytes, time.perf_counter() - start_time
 
-    context_data = extract_and_fetch_live_data(user_input, status_callback=status_callback)
-    
-    # Ingest 200MB PDF document if provided
+    # 1. Ingest PDF Document if attached (Strict Grounding)
     pdf_context = ""
     if uploaded_pdf is not None:
         if status_callback:
-            status_callback("info", "Parsing institutional filing / PDF document...")
+            status_callback("info", "Extracting institutional filing sections...")
         pdf_text = parse_large_pdf(uploaded_pdf, query=user_input)
-        if pdf_text:
-            pdf_context = f"\n\n[UPLOADED INSTITUTIONAL FILING DATA]:\n{pdf_text}\n\n"
+        if pdf_text and not pdf_text.startswith("⚠️"):
+            pdf_context = (
+                f"\n\n[OFFICIAL FINANCIAL FILING DOCUMENT ATTACHED]:\n"
+                f"\"\"\"\n{pdf_text}\n\"\"\"\n"
+                f"CRITICAL DIRECTIVE: Perform all quantitative calculations, covenant compliance checks, and balance sheet reconciliations "
+                f"strictly using the numbers and definitions in the document above. Do NOT invent placeholder numbers.\n\n"
+            )
+        elif pdf_text:
+            pdf_context = f"\n\n{pdf_text}\n\n"
 
-    augmented_prompt = user_input + context_data + pdf_context
+    # 2. Extract live market exchange data if requested
+    context_data = extract_and_fetch_live_data(user_input, status_callback=status_callback)
+
+    # Document context is placed first so the LLM grounds its answers in the document
+    augmented_prompt = pdf_context + user_input + context_data
 
     try:
         messages = build_contextual_messages(augmented_prompt, SYSTEM_PROMPT)
