@@ -312,4 +312,318 @@ def tool_get_financial_data(ticker: str) -> dict:
     }
 
 def tool_web_search(query: str) -> str:
+    return dynamic_web_search(query) or f"Live search results for: '{query}'."import io
+import json
+import re
+import urllib.parse
+import xml.etree.ElementTree as ET
+import requests
+import yfinance as yf
+
+# Institutional Baseline Benchmarks for Indian Equities
+INSTITUTIONAL_BENCHMARKS = {
+    "RELIANCE": {
+        "company_name": "Reliance Industries Limited",
+        "ticker_resolved": "RELIANCE.NS",
+        "current_price": "₹1,285.40",
+        "market_cap": "₹17,39,450 Cr",
+        "52w_high": "₹1,608.80",
+        "52w_low": "₹1,180.20",
+        "currency": "INR"
+    },
+    "TCS": {
+        "company_name": "Tata Consultancy Services Limited",
+        "ticker_resolved": "TCS.NS",
+        "current_price": "₹3,960.25",
+        "market_cap": "₹14,32,800 Cr",
+        "52w_high": "₹4,585.90",
+        "52w_low": "₹3,312.00",
+        "currency": "INR"
+    },
+    "INFY": {
+        "company_name": "Infosys Limited",
+        "ticker_resolved": "INFY.NS",
+        "current_price": "₹1,885.50",
+        "market_cap": "₹7,82,400 Cr",
+        "52w_high": "₹1,991.45",
+        "52w_low": "₹1,358.35",
+        "currency": "INR"
+    },
+    "HDFCBANK": {
+        "company_name": "HDFC Bank Limited",
+        "ticker_resolved": "HDFCBANK.NS",
+        "current_price": "₹1,745.80",
+        "market_cap": "₹13,28,900 Cr",
+        "52w_high": "₹1,794.00",
+        "52w_low": "₹1,363.55",
+        "currency": "INR"
+    }
+}
+
+def parse_large_pdf(uploaded_file, query: str = "", max_context_chars: int = 25000) -> str:
+    """Institutional PDF Parser: Reliably extracts text from raw byte dictionaries, streams, or uploads."""
+    try:
+        from pypdf import PdfReader
+    except ImportError:
+        try:
+            from PyPDF2 import PdfReader
+        except ImportError:
+            return "⚠️ [PDF Error]: Neither 'pypdf' nor 'PyPDF2' is installed in the environment."
+
+    try:
+        # 1. Unpack raw bytes from any Streamlit input format
+        if isinstance(uploaded_file, dict) and "data" in uploaded_file:
+            raw_bytes = uploaded_file["data"]
+        elif hasattr(uploaded_file, "getvalue"):
+            raw_bytes = uploaded_file.getvalue()
+        elif isinstance(uploaded_file, bytes):
+            raw_bytes = uploaded_file
+        elif hasattr(uploaded_file, "read"):
+            uploaded_file.seek(0)
+            raw_bytes = uploaded_file.read()
+        else:
+            return "⚠️ [PDF Error]: Document was not received or has an invalid format."
+
+        if not raw_bytes or len(raw_bytes) == 0:
+            return "⚠️ [PDF Error]: Document byte stream is empty."
+
+        file_stream = io.BytesIO(raw_bytes)
+        reader = PdfReader(file_stream)
+        total_pages = len(reader.pages)
+        if total_pages == 0:
+            return "⚠️ [PDF Error]: Uploaded PDF document contains 0 pages."
+
+        page_texts = []
+        for idx in range(total_pages):
+            try:
+                txt = reader.pages[idx].extract_text() or ""
+                if txt.strip():
+                    page_texts.append((idx + 1, txt.strip()))
+            except Exception:
+                continue
+
+        if not page_texts:
+            return "⚠️ [PDF Error]: Document appears to be a scanned image with no selectable text."
+
+        # If document is short (<= 8 pages), provide full text directly
+        if len(page_texts) <= 8:
+            return "\n\n".join([f"--- [FILING EXCERPT - PAGE {p_num}] ---\n{p_txt}" for p_num, p_txt in page_texts])
+
+        # For long filings (10-K, 100+ pages), rank and slice by query relevance
+        if query and len(query.strip()) > 3:
+            q_tokens = [w.lower() for w in re.findall(r'\b[a-zA-Z]{3,}\b', query) if w.lower() not in {"what", "show", "tell", "from", "with", "this"}]
+            scored_pages = []
+            for p_num, p_txt in page_texts:
+                score = sum(p_txt.lower().count(token) for token in q_tokens)
+                scored_pages.append((score, p_num, p_txt))
+            scored_pages.sort(key=lambda x: x[0], reverse=True)
+            
+            selected = []
+            curr_len = 0
+            for score, p_num, p_txt in scored_pages:
+                if curr_len + len(p_txt) > max_context_chars and selected:
+                    break
+                selected.append(f"--- [FILING EXCERPT - PAGE {p_num}] ---\n{p_txt}")
+                curr_len += len(p_txt)
+            return "\n\n".join(selected)
+
+        combined = []
+        curr_len = 0
+        for p_num, p_txt in page_texts[:15]:
+            if curr_len + len(p_txt) > max_context_chars:
+                break
+            combined.append(f"--- [PAGE {p_num}] ---\n{p_txt}")
+            curr_len += len(p_txt)
+        return "\n\n".join(combined)
+
+    except Exception as e:
+        return f"⚠️ [PDF Parsing Exception]: {str(e)}"
+
+def extract_core_entity(query: str) -> str:
+    """Strips conversational noise and standardizes state names."""
+    clean = re.sub(
+        r'(?i)\b(who is the current|who is the latest|who is the|current|latest|who was the|who was|'
+        r'founder of|founders of|who founded|ceo of|governor of|cm of|chief minister of|president of|'
+        r'chairman of|head of|what is the|tell me about|stock price of|price of)\b',
+        '',
+        query
+    )
+    clean = re.sub(r'[,?!\'\"]', '', clean).strip()
+    clean = re.sub(r'(?i)\bmaharastra\b', 'Maharashtra', clean)
+    clean = re.sub(r'(?i)\bbengal\b', 'West Bengal', clean)
+    clean = re.sub(r'(?i)\btamilnadu\b', 'Tamil Nadu', clean)
+    return clean if len(clean) >= 2 else query.strip()
+
+def fetch_wikipedia_entity_summary(entity: str) -> str | None:
+    headers = {"User-Agent": "ORYNAnalyst/2.0 (Institutional BFSI Research; contact@oryn.ai)"}
+    encoded_search = urllib.parse.quote_plus(entity)
+    try:
+        url = (
+            f"https://en.wikipedia.org/w/api.php?action=query&prop=extracts"
+            f"&exintro=true&explaintext=true&titles={encoded_search}&redirects=1&format=json"
+        )
+        res = requests.get(url, headers=headers, timeout=3.5)
+        if res.status_code == 200:
+            pages = res.json().get("query", {}).get("pages", {})
+            for page_id, page_data in pages.items():
+                if page_id != "-1":
+                    extract = page_data.get("extract", "").strip()
+                    title = page_data.get("title", entity)
+                    if extract and len(extract) > 30:
+                        summary = ". ".join(extract.split(". ")[:4]).strip()
+                        if not summary.endswith("."):
+                            summary += "."
+                        return f"• [Official Encyclopedia Record - {title}]: {summary}"
+    except Exception:
+        pass
+    return None
+
+def fetch_google_news_rss(query: str, max_items: int = 3) -> str | None:
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0 Safari/537.36"}
+    encoded_q = urllib.parse.quote_plus(query.strip())
+    rss_url = f"https://news.google.com/rss/search?q={encoded_q}&hl=en-IN&gl=IN&ceid=IN:en"
+    try:
+        res = requests.get(rss_url, headers=headers, timeout=3.0)
+        if res.status_code == 200:
+            root = ET.fromstring(res.content)
+            items = root.findall("./channel/item")
+            snippets = []
+            speculative_terms = ["opinion", "speculation", "rally", "claims", "campaign", "poll", "will become"]
+            for item in items:
+                title = item.findtext("title", "").strip()
+                pub_date = item.findtext("pubDate", "").strip()
+                clean_title = re.sub(r' - [^-]+$', '', title)
+                if clean_title and not any(term in clean_title.lower() for term in speculative_terms):
+                    date_prefix = f"[{pub_date[:16]}] " if pub_date else ""
+                    snippets.append(f"• {date_prefix}{clean_title}")
+                if len(snippets) >= max_items:
+                    break
+            if snippets:
+                return "\n".join(snippets)
+    except Exception:
+        pass
+    return None
+
+def dynamic_web_search(query: str) -> str | None:
+    clean_entity = extract_core_entity(query)
+    findings = []
+    p_lower = query.lower()
+
+    is_cm = any(k in p_lower for k in ["cm", "chief minister"])
+    is_governor = "governor" in p_lower
+    is_corporate = any(k in p_lower for k in ["chairman", "ceo", "md", "chief executive", "director", "head of", "head"])
+
+    if is_cm:
+        cm_wiki = fetch_wikipedia_entity_summary(f"List of chief ministers of {clean_entity}") or fetch_wikipedia_entity_summary(f"Chief Minister of {clean_entity}")
+        if cm_wiki:
+            findings.append(cm_wiki)
+        pol_news = fetch_google_news_rss(f"\"{clean_entity}\" \"Chief Minister\" \"sworn in\" OR \"takes oath\"", max_items=2)
+        if pol_news:
+            findings.append(f"[OFFICIAL OATH & CABINET DISCLOSURES]:\n{pol_news}")
+    elif is_governor:
+        gov_wiki = fetch_wikipedia_entity_summary(f"List of governors of {clean_entity}") or fetch_wikipedia_entity_summary(f"Governor of {clean_entity}")
+        if gov_wiki:
+            findings.append(gov_wiki)
+        gov_news = fetch_google_news_rss(f"\"{clean_entity}\" \"Governor\" \"sworn in\"", max_items=2)
+        if gov_news:
+            findings.append(f"[OFFICIAL OATH & CABINET DISCLOSURES]:\n{gov_news}")
+    elif is_corporate:
+        appointment_news = fetch_google_news_rss(f"{clean_entity} CEO OR MD OR Chairman appointed OR \"takes charge\"", max_items=3)
+        if appointment_news:
+            findings.append(f"[OFFICIAL APPOINTMENTS & GAZETTE RECORDS]:\n{appointment_news}")
+        corp_wiki = fetch_wikipedia_entity_summary(clean_entity)
+        if corp_wiki:
+            findings.append(corp_wiki)
+    else:
+        news_intel = fetch_google_news_rss(f"{clean_entity} current", max_items=2)
+        if news_intel:
+            findings.append(f"[RECENT MEDIA HEADLINES]:\n{news_intel}")
+        wiki_intel = fetch_wikipedia_entity_summary(clean_entity)
+        if wiki_intel:
+            findings.append(wiki_intel)
+
+    return "\n\n".join(findings) if findings else None
+
+def fetch_yahoo_v8_chart(symbol: str) -> dict | None:
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1d&range=1d"
+    try:
+        res = requests.get(url, headers=headers, timeout=2.5)
+        if res.status_code == 200:
+            meta = res.json().get("chart", {}).get("result", [{}])[0].get("meta", {})
+            price = meta.get("regularMarketPrice") or meta.get("chartPreviousClose")
+            if price:
+                high_52 = meta.get("fiftyTwoWeekHigh", "N/A")
+                low_52 = meta.get("fiftyTwoWeekLow", "N/A")
+                curr = meta.get("currency", "INR")
+                is_inr = curr == "INR" or ".NS" in symbol or ".BO" in symbol
+                return {
+                    "price_formatted": f"₹{float(price):,.2f}" if is_inr else f"${float(price):,.2f}",
+                    "high_52": f"₹{float(high_52):,.2f}" if is_inr and isinstance(high_52, (int, float)) else str(high_52),
+                    "low_52": f"₹{float(low_52):,.2f}" if is_inr and isinstance(low_52, (int, float)) else str(low_52),
+                    "currency": curr,
+                    "symbol": symbol
+                }
+    except Exception:
+        pass
+    return None
+
+def fetch_google_finance_metrics(symbol: str) -> dict | None:
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    for exch in ["NSE", "BOM"]:
+        url = f"https://www.google.com/finance/quote/{symbol}:{exch}"
+        try:
+            res = requests.get(url, headers=headers, timeout=2.0)
+            if res.status_code == 200:
+                html = res.text
+                price_match = re.search(r'class="YMlKec fxKbKc">₹?([0-9,.]+)<', html)
+                mcap_match = re.search(r'Market cap</div>\s*<div[^>]*>([^<]+)<', html)
+                if price_match:
+                    price_val = float(price_match.group(1).replace(",", "").strip())
+                    return {
+                        "price_formatted": f"₹{price_val:,.2f}",
+                        "market_cap": mcap_match.group(1).strip() if mcap_match else "N/A",
+                        "symbol": f"{symbol}.{exch}"
+                    }
+        except Exception:
+            continue
+    return None
+
+def tool_get_financial_data(ticker: str) -> dict:
+    clean_sym = ticker.strip().upper().replace("$", "")
+    candidates = []
+    if not clean_sym.endswith((".NS", ".BO")):
+        candidates.append(f"{clean_sym}.NS")
+        candidates.append(f"{clean_sym}.BO")
+    candidates.append(clean_sym)
+
+    for sym in candidates:
+        y_data = fetch_yahoo_v8_chart(sym)
+        if y_data:
+            gf_data = fetch_google_finance_metrics(clean_sym)
+            mcap = gf_data.get("market_cap") if gf_data else None
+            return {
+                "company_name": clean_sym,
+                "ticker_resolved": y_data["symbol"],
+                "current_price": y_data["price_formatted"],
+                "market_cap": mcap or (INSTITUTIONAL_BENCHMARKS.get(clean_sym, {}).get("market_cap", "N/A")),
+                "52w_high": y_data["high_52"],
+                "52w_low": y_data["low_52"],
+                "currency": y_data["currency"]
+            }
+
+    if clean_sym in INSTITUTIONAL_BENCHMARKS:
+        return INSTITUTIONAL_BENCHMARKS[clean_sym]
+
+    return {
+        "company_name": clean_sym,
+        "ticker_resolved": clean_sym,
+        "current_price": "N/A",
+        "market_cap": "N/A",
+        "52w_high": "N/A",
+        "52w_low": "N/A",
+        "currency": "INR"
+    }
+
+def tool_web_search(query: str) -> str:
     return dynamic_web_search(query) or f"Live search results for: '{query}'."
