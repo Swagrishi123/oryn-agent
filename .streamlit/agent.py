@@ -40,15 +40,14 @@ SYSTEM_PROMPT = (
     "You are ORYN Analyst, an elite institutional BFSI quantitative analyst and corporate intelligence advisor.\n\n"
     "CRITICAL CONVERSATION & MEMORY VAULT PROTOCOL:\n"
     "1. DOCUMENT-FIRST QUANTITATIVE RIGOR: When institutional filing content is provided under [OFFICIAL FINANCIAL FILING DOCUMENT ATTACHED], "
-    "perform all quantitative calculations, covenant compliance tests, and balance sheet waterfalls DIRECTLY and IMMEDIATELY using the "
-    "exact numbers, sections, and definitions in that filing text. Show complete, unhurried calculations for all requested parts. Do not stop until every part is answered.\n"
+    "perform all quantitative calculations, covenant compliance tests, and balance sheet waterfalls DIRECTLY and FULLY using the "
+    "exact numbers, sections, and definitions in that filing text. Answer all parts systematically. Show step-by-step arithmetic.\n"
     "2. MULTI-TURN CONTINUITY ACROSS SESSIONS: Review ALL conversation turns and archived session history in your prompt. "
     "When a user asks to 're-run', 'sensitize', or 'modify' a previous calculation, retain ALL baseline parameters (EBITDA, purchase price, "
     "equity check, debt balances) from the prior prompt or session archive and ONLY adjust the requested variable.\n"
     "3. NO BRACKET TAGS OR ECHOING: NEVER output bracketed headers (e.g., [ORYN REPORT]). Begin directly with the analysis.\n"
     "4. NO CHATBOT HEDGING: Eliminate conversational filler (e.g., 'Based on the available information'). Deliver crisp intelligence.\n"
-    "5. CLEAN MARKDOWN FORMATTING: Present formulas in plain, bold text (e.g., **Adjusted EBITDA = Unadjusted EBITDA + Capped Add-backs**). "
-    "Do NOT output raw brackets like '[ \\text{...} ]' or isolated '$' symbols that disrupt markdown rendering.\n"
+    "5. CLEAN FORMATTING: Use bold markdown text for formulas. Never output raw brackets like '[ \\text{...} ]'.\n"
     "6. REAL-WORLD INCUMBENCY (STRICT ADHERENCE):\n"
     "   - Tamil Nadu: Chief Minister is M. K. Stalin (DMK), in office since May 2021.\n"
     "   - Maharashtra: Chief Minister is Devendra Fadnavis (BJP / Mahayuti), in office since December 2024.\n"
@@ -101,7 +100,7 @@ KNOWN_ENTITIES = {
 }
 
 def extract_pdf_document_text(uploaded_payload, query: str = "", max_chars: int = 25000) -> tuple[str, int, int]:
-    """Reliable PDF extractor handling raw byte bundles, files, strings, or streams."""
+    """Reliable PDF extractor handling raw byte bundles, files, benchmark strings, or streams."""
     if uploaded_payload is None:
         return "", 0, 0
 
@@ -219,14 +218,13 @@ def extract_and_fetch_live_data(prompt: str, status_callback=None) -> str:
     return "\n\n" + "\n\n".join(injected_context) + "\n\n" if injected_context else ""
 
 def sanitize_report_formatting(text: str) -> str:
-    """Cleans up markdown formatting, unescapes code wrappers, and guarantees complete returns."""
+    """Cleans up markdown formatting, unescapes code wrappers, and preserves output completeness."""
     if not text or not text.strip():
         return "No analysis generated. Please check your query or filing input."
 
     cleaned = re.sub(r'^```(?:markdown|text)?\s*\n', '', text.strip(), flags=re.IGNORECASE)
     cleaned = re.sub(r'\n```\s*$', '', cleaned.strip())
     cleaned = re.sub(r'^\[(?:ORYN REPORT\vert{}REPORT\vert{}ANALYSIS\vert{}QUANTITATIVE ANALYSIS)\]:?\s*', '', cleaned, flags=re.IGNORECASE)
-    cleaned = re.sub(r'(?i)^(?:based on the (?:provided|available|attached) (?:information|data|filing|credit agreement)[,\s]*\n?)+', '', cleaned)
     cleaned = re.sub(r'\$\s*([0-9])', r'USD \1', cleaned)
     cleaned = re.sub(r'\|\s*\|', '|\n|', cleaned)
 
@@ -288,8 +286,8 @@ def get_best_available_model(client: Groq, exclude_model: str = None, force_refr
 def create_completion_with_fallback(client: Groq, preferred_model: str = None, status_callback=None, **kwargs):
     global CACHED_WORKING_MODEL
     active_model = preferred_model or get_best_available_model(client)
-    
-    # Target 1500 tokens for institutional depth; Zero out penalties to prevent token-suppression truncation
+
+    # 1500 tokens for institutional depth; Zero out penalties to prevent token-suppression truncation
     kwargs["max_tokens"] = kwargs.get("max_tokens", 1500)
     kwargs["temperature"] = kwargs.get("temperature", 0.1)
     kwargs["frequency_penalty"] = 0.0
@@ -323,7 +321,6 @@ def build_contextual_messages(user_input: str, system_prompt: str) -> list[dict]
     vault_context = []
     try:
         import streamlit as st
-        # 1. Recover vault memories across resets
         if "session_vault" in st.session_state and isinstance(st.session_state.session_vault, list):
             for s_idx, session_turns in enumerate(st.session_state.session_vault[-3:]):
                 summary_lines = []
@@ -334,7 +331,6 @@ def build_contextual_messages(user_input: str, system_prompt: str) -> list[dict]
                 if summary_lines:
                     vault_context.append(f"[ARCHIVED RUN #{s_idx + 1}]:\n" + "\n".join(summary_lines))
 
-        # 2. Recover active messages from current screen
         if "messages" in st.session_state and isinstance(st.session_state.messages, list):
             stored = st.session_state.messages
             candidates = stored[:-1] if (stored and stored[-1].get("role") == "user") else stored
@@ -473,11 +469,14 @@ def run_analyst_agent(
         if pdf_text.startswith("⚠️"):
             return pdf_text, None, None, time.perf_counter() - start_time
 
+        # Fail-safe content check: Stop hallucination if an empty/near-empty PDF was uploaded
         if c_count < 100:
             doc_name = uploaded_pdf.get("name", "Document") if isinstance(uploaded_pdf, dict) else "Document"
             err_msg = (
-                f"⚠️ **Incomplete Filing Attached**: The attached file (`{doc_name}`) contains only {c_count} characters.\n"
-                f"Please attach a PDF with selectable text or use the 1-click benchmark in the `➕` drawer."
+                f"⚠️ **Incomplete / Empty Filing Attached**: The attached file (`{doc_name}`) contains only {c_count} characters:\n"
+                f"> *\"{pdf_text[:120]}\"*\n\n"
+                f"It does not contain the required credit agreement covenants or balance sheet numbers. "
+                f"Please ensure you attach a PDF containing the actual agreement text, or click **'⚡ Load Apex Credit Agreement'** in the `➕` drawer."
             )
             return err_msg, None, None, time.perf_counter() - start_time
 
@@ -489,7 +488,7 @@ def run_analyst_agent(
             f"\"\"\"\n{pdf_text}\n\"\"\"\n\n"
             f"CRITICAL DIRECTIVE: The user's query pertains directly to the document above. Perform all quantitative "
             f"calculations, covenant compliance tests, and balance sheet waterfalls DIRECTLY and FULLY using the "
-            f"exact numbers, sections, and definitions in this filing. Answer all three parts systematically. Do not truncate.\n\n"
+            f"exact numbers, sections, and definitions in this filing. Answer all three parts systematically. Show step-by-step arithmetic. Do not truncate.\n\n"
         )
     elif any(k in user_input.lower() for k in ["attached", "credit agreement", "indenture", "filing"]):
         return (
