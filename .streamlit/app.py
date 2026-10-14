@@ -12,63 +12,58 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS: Docks the '+' button directly inside the left edge of the chat input box
+# Custom CSS: Docks the '+' button directly INSIDE the typing bar (Gemini-style)
 st.markdown(
     """
     <style>
-    /* Ensure the bottom container allows absolute positioning */
-    div[data-testid="stBottom"] > div {
+    /* Make the bottom container allow precise positioning */
+    div[data-testid="stBottom"] > div,
+    div[data-testid="stBottomBlockContainer"] {
         position: relative !important;
     }
 
-    /* Indent chat input text so it starts after the '+' button */
+    /* Indent chat placeholder and text so it starts after the '+' button */
     div[data-testid="stChatInput"] textarea {
-        padding-left: 52px !important;
+        padding-left: 54px !important;
     }
 
-    /* Position the '+' button directly inside the left of the input bar */
-    .gemini-attach-wrapper {
+    /* Pull the attach button directly inside the left edge of the typing pill */
+    div[data-testid="stBottom"] div[data-testid="stElementContainer"]:has(#gemini_attach_anchor),
+    div[data-testid="stBottom"] div[data-testid="stElementContainer"]:has(div[data-testid="stButton"]) {
         position: absolute !important;
-        bottom: 21px !important;
-        left: 10px !important;
+        bottom: 22px !important;
+        left: 14px !important;
         z-index: 99999 !important;
-    }
-
-    .gemini-attach-wrapper div[data-testid="stButton"] {
+        width: 32px !important;
+        height: 32px !important;
         margin: 0 !important;
         padding: 0 !important;
     }
 
-    .gemini-attach-wrapper div[data-testid="stButton"] > button {
+    /* Style the '+' button to match Gemini: borderless, circular, centered */
+    div[data-testid="stBottom"] div[data-testid="stButton"] > button {
         border-radius: 50% !important;
-        width: 34px !important;
-        height: 34px !important;
-        min-height: 34px !important;
-        padding: 0 !important;
+        width: 32px !important;
+        height: 32px !important;
+        min-height: 32px !important;
+        max-height: 32px !important;
+        border: none !important;
+        background-color: transparent !important;
+        color: #7b1fa2 !important;
         font-size: 20px !important;
-        font-weight: 600 !important;
+        font-weight: 500 !important;
         line-height: 1 !important;
-        border: 1px solid #7b1fa2 !important;
-        background-color: #faf5ff !important;
-        color: #4a148c !important;
         display: flex !important;
         align-items: center !important;
         justify-content: center !important;
-        transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.2s !important;
-        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1) !important;
+        padding: 0 !important;
+        margin: 0 !important;
+        transition: background-color 0.2s ease, transform 0.2s ease !important;
     }
 
-    .gemini-attach-wrapper div[data-testid="stButton"] > button:hover {
-        background-color: #f3e8ff !important;
-        border-color: #4a148c !important;
-    }
-
-    /* Rotate into an 'X' when the drawer is open */
-    .gemini-attach-wrapper.is-open div[data-testid="stButton"] > button {
-        transform: rotate(45deg) !important;
-        background-color: #4a148c !important;
-        color: #ffffff !important;
-        border-color: #4a148c !important;
+    div[data-testid="stBottom"] div[data-testid="stButton"] > button:hover {
+        background-color: rgba(123, 31, 162, 0.12) !important;
+        color: #4a148c !important;
     }
 
     /* Document Drawer Styling */
@@ -167,11 +162,10 @@ for message in st.session_state.messages:
 # ==========================================
 # GEMINI-STYLE BOTTOM DOCK (INPUT & DRAWER)
 # ==========================================
-# Use st.bottom directly without calling ()
 bottom_area = st.bottom if hasattr(st, "bottom") else st.container()
 
 with bottom_area:
-    # 1. Expandable PDF Drawer (Opens above chat bar when '+' is clicked)
+    # 1. Expandable PDF Drawer (Slides open above the typing bar)
     if st.session_state.show_uploader:
         with st.container():
             st.markdown(
@@ -196,21 +190,13 @@ with bottom_area:
 
     # 2. Attached Document Indicator Chip
     if st.session_state.active_pdf is not None and not st.session_state.show_uploader:
-        chip_col1, chip_col2 = st.columns([5, 1])
-        with chip_col1:
-            st.info(f"📄 **Filing Loaded:** {st.session_state.active_pdf.name} ({(st.session_state.active_pdf.size)/(1024*1024):.1f} MB)")
-        with chip_col2:
-            if st.button("Detach ✕", help="Remove attached document"):
-                st.session_state.active_pdf = None
-                st.rerun()
+        st.caption(f"📄 **Filing Loaded:** {st.session_state.active_pdf.name} ({(st.session_state.active_pdf.size)/(1024*1024):.1f} MB) — *Click ➕ to change document*")
 
-    # 3. Rotating '+' Button (Anchored directly inside the left of the input bar)
-    btn_state_class = "is-open" if st.session_state.show_uploader else ""
-    st.markdown(f'<div class="gemini-attach-wrapper {btn_state_class}">', unsafe_allow_html=True)
-    if st.button("➕", key="gemini_plus_btn", help="Attach 10-K, CIM, or Credit Agreement"):
+    # 3. Rotating Gemini '+' Attachment Button (Anchored inside the typing bar)
+    btn_icon = "✕" if st.session_state.show_uploader else "➕"
+    if st.button(btn_icon, key="gemini_attach_btn", help="Attach 10-K, CIM, or Credit Agreement"):
         st.session_state.show_uploader = not st.session_state.show_uploader
         st.rerun()
-    st.markdown('</div>', unsafe_allow_html=True)
 
     # 4. Bottom Chat Input
     user_prompt = st.chat_input("Enter institutional query, model schedule, or analysis directive...")
