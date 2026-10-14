@@ -47,7 +47,7 @@ INSTITUTIONAL_BENCHMARKS = {
 }
 
 def parse_large_pdf(uploaded_file, query: str = "", max_context_chars: int = 25000) -> str:
-    """Institutional PDF Parser: Reliably extracts text from raw bytes or streams up to 200MB."""
+    """Institutional PDF Parser: Reliably extracts text from raw byte dictionaries, streams, or uploads."""
     try:
         from pypdf import PdfReader
     except ImportError:
@@ -57,7 +57,7 @@ def parse_large_pdf(uploaded_file, query: str = "", max_context_chars: int = 250
             return "⚠️ [PDF Error]: Neither 'pypdf' nor 'PyPDF2' is installed in the environment."
 
     try:
-        # Extract raw byte buffer whether passed as dict, bytes, or file stream
+        # 1. Unpack raw bytes from any Streamlit input format
         if isinstance(uploaded_file, dict) and "data" in uploaded_file:
             raw_bytes = uploaded_file["data"]
         elif hasattr(uploaded_file, "getvalue"):
@@ -68,7 +68,7 @@ def parse_large_pdf(uploaded_file, query: str = "", max_context_chars: int = 250
             uploaded_file.seek(0)
             raw_bytes = uploaded_file.read()
         else:
-            return "⚠️ [PDF Error]: Invalid document payload format."
+            return "⚠️ [PDF Error]: Document was not received or has an invalid format."
 
         if not raw_bytes or len(raw_bytes) == 0:
             return "⚠️ [PDF Error]: Document byte stream is empty."
