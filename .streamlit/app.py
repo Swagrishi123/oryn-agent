@@ -12,6 +12,34 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# Benchmark Credit Agreement Template for 1-Click Verification
+BENCHMARK_APEX_AGREEMENT = """CONFIDENTIAL CREDIT AGREEMENT & INDENTURE
+BORROWER: APEX LOGISTICS HOLDINGS INC.
+FACILITY: USD 450,000,000 SENIOR SECURED CREDIT FACILITIES
+DATE: MARCH 15, 2026
+
+SECTION 1.01: FINANCIAL DEFINITIONS & ADJUSTED EBITDA
+"Consolidated Adjusted EBITDA" means, for any four-quarter testing period:
+Consolidated Net Income plus:
+(a) Consolidated Interest Expense ($42.5M for LTM);
+(b) Provision for taxes based on income ($18.0M for LTM);
+(c) Total Depreciation and Amortization ($35.5M for LTM);
+(d) Non-recurring restructuring charges capped strictly at 10.0% of unadjusted EBITDA ($6.0M recognized).
+Reported unadjusted LTM EBITDA is USD 80.0M.
+
+SECTION 6.02: NEGATIVE COVENANTS - INDEBTEDNESS & LEVERAGE RATIOS
+(a) Total Net Leverage Ratio: The Borrower shall not permit the Total Net Leverage Ratio as of the last day of any fiscal quarter to exceed 4.25x Consolidated Adjusted EBITDA.
+(b) Senior Secured Net Leverage Ratio: The Borrower shall not permit the Senior Secured Net Leverage Ratio to exceed 3.00x Consolidated Adjusted EBITDA.
+(c) Restricted Cash Exclusions: For purposes of calculating "Net Debt", unrestricted cash is capped at $50.0M for netting purposes. Restricted cash held in the collateral account ($18.5M) shall NOT be netted against Gross Debt under any circumstance.
+
+SECTION 7.01: CAPITAL STRUCTURE AT CLOSING
+- Term Loan A (Senior Secured): USD 180.0M (SOFR + 250 bps)
+- Term Loan B (Senior Secured): USD 120.0M (SOFR + 350 bps)
+- Senior Unsecured Notes: USD 100.0M (Fixed 8.25%)
+- Revolving Credit Facility ($50M capacity): USD 15.0M drawn at closing
+- Unrestricted Cash on Balance Sheet: USD 35.0M
+- Restricted Collateral Cash: USD 18.5M"""
+
 # Custom CSS: Solid Opaque Bottom Dock (Zero Text Bleed-Through) + Slim Gemini Chat Pill
 st.markdown(
     """
@@ -243,27 +271,50 @@ with bottom_area:
                 """,
                 unsafe_allow_html=True
             )
-            uploaded_file = st.file_uploader(
-                "Upload 200MB PDF",
-                type=["pdf"],
-                label_visibility="collapsed",
-                help="Dense filings up to 200MB are indexed dynamically."
-            )
-            if uploaded_file is not None:
-                # Capture raw bytes immediately into session state
-                st.session_state.active_pdf = {
-                    "name": uploaded_file.name,
-                    "size": uploaded_file.size,
-                    "data": uploaded_file.getvalue()
-                }
-                st.session_state.show_uploader = False
-                st.rerun()
+            col_up, col_preset = st.columns([3, 2])
+            with col_up:
+                uploaded_file = st.file_uploader(
+                    "Upload 200MB PDF",
+                    type=["pdf"],
+                    label_visibility="collapsed",
+                    help="Dense filings up to 200MB are indexed dynamically."
+                )
+                if uploaded_file is not None:
+                    # Extract raw text snippet for visual preview
+                    extracted_text, p_cnt, c_cnt = agent.extract_pdf_document_text(uploaded_file.getvalue())
+                    preview = extracted_text.replace("\n", " ").strip()[:90] if extracted_text else "No text found"
+                    st.session_state.active_pdf = {
+                        "name": uploaded_file.name,
+                        "size": uploaded_file.size,
+                        "data": uploaded_file.getvalue(),
+                        "preview": preview,
+                        "chars": c_cnt
+                    }
+                    st.session_state.show_uploader = False
+                    st.rerun()
 
-    # 2. Compact Attached Filing Chip
+            with col_preset:
+                if st.button("⚡ Load Apex Credit Agreement", help="Load the verified benchmark credit agreement directly"):
+                    st.session_state.active_pdf = {
+                        "name": "Apex_Credit_Agreement_Benchmark.txt",
+                        "size": len(BENCHMARK_APEX_AGREEMENT.encode("utf-8")),
+                        "text": BENCHMARK_APEX_AGREEMENT,
+                        "preview": "CONFIDENTIAL CREDIT AGREEMENT & INDENTURE BORROWER: APEX LOGISTICS HOLDINGS INC...",
+                        "chars": len(BENCHMARK_APEX_AGREEMENT)
+                    }
+                    st.session_state.show_uploader = False
+                    st.rerun()
+
+    # 2. Compact Attached Filing Chip with Live Preview
     if st.session_state.active_pdf is not None and not st.session_state.show_uploader:
         c_badge, c_detach = st.columns([6, 1])
         with c_badge:
-            st.info(f"📄 **Filing Loaded:** {st.session_state.active_pdf['name']} ({(st.session_state.active_pdf['size'])/(1024*1024):.1f} MB)")
+            p_text = st.session_state.active_pdf.get("preview", "")
+            c_count = st.session_state.active_pdf.get("chars", 0)
+            if c_count < 100:
+                st.warning(f"⚠️ **Loaded:** {st.session_state.active_pdf['name']} ({c_count} chars: *\"{p_text}\"*) — *File appears empty!*")
+            else:
+                st.info(f"📄 **Filing Loaded:** {st.session_state.active_pdf['name']} ({c_count:,} chars) • *Preview:* \"{p_text}...\"")
         with c_detach:
             if st.button("✕", help="Detach filing"):
                 st.session_state.active_pdf = None
@@ -297,7 +348,7 @@ if user_prompt:
         st.markdown(user_prompt)
 
     with st.chat_message("assistant"):
-        status_box = st.status("Executing quantitative analysis...", expanded=False)
+        status_box = st.status("Executing quantitative analysis...", expanded=True)
 
         def status_callback(status_type, message):
             status_box.write(f"• {message}")
@@ -310,7 +361,7 @@ if user_prompt:
             uploaded_pdf=st.session_state.active_pdf
         )
 
-        status_box.update(label=f"✅ Complete ({elapsed:.2f}s)", state="complete")
+        status_box.update(label=f"✅ Complete ({elapsed:.2f}s)", state="complete", expanded=False)
         st.markdown(report)
 
         if plot_bytes:
