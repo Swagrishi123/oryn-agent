@@ -12,11 +12,11 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS: Docks the '+' button directly INSIDE the left edge of the chat input pill
+# Custom CSS: Docks the '+' button directly inside the left edge of the chat input box
 st.markdown(
     """
     <style>
-    /* Make the bottom container allow precise positioning */
+    /* Ensure the bottom container allows absolute positioning */
     div[data-testid="stBottom"] > div {
         position: relative !important;
     }
@@ -26,7 +26,7 @@ st.markdown(
         padding-left: 52px !important;
     }
 
-    /* Position the '+' button directly inside the left of the input box */
+    /* Position the '+' button directly inside the left of the input bar */
     .gemini-attach-wrapper {
         position: absolute !important;
         bottom: 21px !important;
@@ -63,7 +63,7 @@ st.markdown(
         border-color: #4a148c !important;
     }
 
-    /* Rotate into an 'X' when open */
+    /* Rotate into an 'X' when the drawer is open */
     .gemini-attach-wrapper.is-open div[data-testid="stButton"] > button {
         transform: rotate(45deg) !important;
         background-color: #4a148c !important;
@@ -167,10 +167,11 @@ for message in st.session_state.messages:
 # ==========================================
 # GEMINI-STYLE BOTTOM DOCK (INPUT & DRAWER)
 # ==========================================
-bottom_area = st.bottom() if hasattr(st, "bottom") else st.container()
+# Use st.bottom directly without calling ()
+bottom_area = st.bottom if hasattr(st, "bottom") else st.container()
 
 with bottom_area:
-    # 1. Expandable PDF Drawer (Slides open above chat bar when '+' is clicked)
+    # 1. Expandable PDF Drawer (Opens above chat bar when '+' is clicked)
     if st.session_state.show_uploader:
         with st.container():
             st.markdown(
@@ -203,7 +204,7 @@ with bottom_area:
                 st.session_state.active_pdf = None
                 st.rerun()
 
-    # 3. Rotating '+' Button (Anchored inside the left of the input bar)
+    # 3. Rotating '+' Button (Anchored directly inside the left of the input bar)
     btn_state_class = "is-open" if st.session_state.show_uploader else ""
     st.markdown(f'<div class="gemini-attach-wrapper {btn_state_class}">', unsafe_allow_html=True)
     if st.button("➕", key="gemini_plus_btn", help="Attach 10-K, CIM, or Credit Agreement"):
