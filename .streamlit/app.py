@@ -12,36 +12,73 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS for Gemini-style rotating '+' attachment button
+# Custom CSS: Docks the '+' button directly INSIDE the left edge of the chat input pill
 st.markdown(
     """
     <style>
-    /* Styling the attachment '+' button */
-    div[data-testid="stButton"] button.attach-btn {
+    /* Make the bottom container allow precise positioning */
+    div[data-testid="stBottom"] > div {
+        position: relative !important;
+    }
+
+    /* Indent chat input text so it starts after the '+' button */
+    div[data-testid="stChatInput"] textarea {
+        padding-left: 52px !important;
+    }
+
+    /* Position the '+' button directly inside the left of the input box */
+    .gemini-attach-wrapper {
+        position: absolute !important;
+        bottom: 21px !important;
+        left: 10px !important;
+        z-index: 99999 !important;
+    }
+
+    .gemini-attach-wrapper div[data-testid="stButton"] {
+        margin: 0 !important;
+        padding: 0 !important;
+    }
+
+    .gemini-attach-wrapper div[data-testid="stButton"] > button {
         border-radius: 50% !important;
-        width: 44px !important;
-        height: 44px !important;
-        font-size: 22px !important;
-        font-weight: bold !important;
+        width: 34px !important;
+        height: 34px !important;
+        min-height: 34px !important;
+        padding: 0 !important;
+        font-size: 20px !important;
+        font-weight: 600 !important;
+        line-height: 1 !important;
+        border: 1px solid #7b1fa2 !important;
+        background-color: #faf5ff !important;
+        color: #4a148c !important;
         display: flex !important;
         align-items: center !important;
         justify-content: center !important;
-        border: 1px solid #4a148c !important;
-        background-color: #faf5ff !important;
-        color: #4a148c !important;
-        transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.2s ease !important;
-        padding: 0 !important;
-        line-height: 1 !important;
+        transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.2s !important;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1) !important;
     }
-    div[data-testid="stButton"] button.attach-btn:hover {
+
+    .gemini-attach-wrapper div[data-testid="stButton"] > button:hover {
         background-color: #f3e8ff !important;
-        border-color: #7b1fa2 !important;
+        border-color: #4a148c !important;
     }
-    /* Rotate 45 degrees into an 'X' when active */
-    .btn-rotated button {
+
+    /* Rotate into an 'X' when open */
+    .gemini-attach-wrapper.is-open div[data-testid="stButton"] > button {
         transform: rotate(45deg) !important;
         background-color: #4a148c !important;
         color: #ffffff !important;
+        border-color: #4a148c !important;
+    }
+
+    /* Document Drawer Styling */
+    .doc-drawer {
+        background-color: #ffffff;
+        border: 1px solid #e9d5ff;
+        border-radius: 12px;
+        padding: 12px 16px;
+        margin-bottom: 8px;
+        box-shadow: 0 4px 12px rgba(74, 20, 140, 0.08);
     }
     </style>
     """,
@@ -69,7 +106,6 @@ with st.sidebar:
     st.caption("Institutional BFSI Quantitative Intelligence")
     st.markdown("---")
 
-    # API Key & Engine Config
     groq_api_key = st.text_input(
         "Groq API Key",
         type="password",
@@ -129,45 +165,58 @@ for message in st.session_state.messages:
             )
 
 # ==========================================
-# GEMINI-STYLE ATTACHMENT TRAY & CHAT BAR
+# GEMINI-STYLE BOTTOM DOCK (INPUT & DRAWER)
 # ==========================================
-col_btn, col_badge = st.columns([1, 15])
+bottom_area = st.bottom() if hasattr(st, "bottom") else st.container()
 
-with col_btn:
-    btn_active_class = "btn-rotated" if st.session_state.show_uploader else ""
-    st.markdown(f'<div class="{btn_active_class}">', unsafe_allow_html=True)
-    if st.button("➕", help="Attach 10-K, Credit Agreement, or CIM (up to 200MB)"):
+with bottom_area:
+    # 1. Expandable PDF Drawer (Slides open above chat bar when '+' is clicked)
+    if st.session_state.show_uploader:
+        with st.container():
+            st.markdown(
+                """
+                <div class="doc-drawer">
+                    <span style="font-weight: 600; color: #4a148c; font-size: 14px;">
+                        📑 Attach Institutional Filing (10-K, Credit Indenture, CIM up to 200MB)
+                    </span>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+            uploaded_file = st.file_uploader(
+                "Upload 200MB PDF",
+                type=["pdf"],
+                label_visibility="collapsed",
+                help="Dense filings up to 200MB are indexed dynamically."
+            )
+            if uploaded_file is not None:
+                st.session_state.active_pdf = uploaded_file
+                st.success(f"✅ Attached: {uploaded_file.name} ({(uploaded_file.size)/(1024*1024):.1f} MB)")
+
+    # 2. Attached Document Indicator Chip
+    if st.session_state.active_pdf is not None and not st.session_state.show_uploader:
+        chip_col1, chip_col2 = st.columns([5, 1])
+        with chip_col1:
+            st.info(f"📄 **Filing Loaded:** {st.session_state.active_pdf.name} ({(st.session_state.active_pdf.size)/(1024*1024):.1f} MB)")
+        with chip_col2:
+            if st.button("Detach ✕", help="Remove attached document"):
+                st.session_state.active_pdf = None
+                st.rerun()
+
+    # 3. Rotating '+' Button (Anchored inside the left of the input bar)
+    btn_state_class = "is-open" if st.session_state.show_uploader else ""
+    st.markdown(f'<div class="gemini-attach-wrapper {btn_state_class}">', unsafe_allow_html=True)
+    if st.button("➕", key="gemini_plus_btn", help="Attach 10-K, CIM, or Credit Agreement"):
         st.session_state.show_uploader = not st.session_state.show_uploader
         st.rerun()
     st.markdown('</div>', unsafe_allow_html=True)
 
-with col_badge:
-    if st.session_state.active_pdf is not None:
-        c1, c2 = st.columns([4, 1])
-        with c1:
-            st.info(f"📄 **Attached Filing:** {st.session_state.active_pdf.name} ({(st.session_state.active_pdf.size)/(1024*1024):.1f} MB)")
-        with c2:
-            if st.button("Remove ✕", help="Detach this document"):
-                st.session_state.active_pdf = None
-                st.rerun()
+    # 4. Bottom Chat Input
+    user_prompt = st.chat_input("Enter institutional query, model schedule, or analysis directive...")
 
-# Expandable Document Reader Tray
-if st.session_state.show_uploader:
-    with st.container(border=True):
-        st.markdown("**📑 Upload Institutional Filing (up to 200MB)**")
-        uploaded_file = st.file_uploader(
-            "Upload 10-K, CIM, or Indenture",
-            type=["pdf"],
-            label_visibility="collapsed",
-            help="Upload dense institutional filings up to 200MB. The engine indexes key sections dynamically."
-        )
-        if uploaded_file is not None:
-            st.session_state.active_pdf = uploaded_file
-            st.success(f"✅ Loaded: {uploaded_file.name} ({(uploaded_file.size)/(1024*1024):.1f} MB). You can now ask questions about this document below.")
-
-# Bottom Chat Input
-user_prompt = st.chat_input("Enter institutional query, model schedule, or analysis directive...")
-
+# ==========================================
+# AGENT EXECUTION
+# ==========================================
 if user_prompt:
     st.session_state.messages.append({"role": "user", "content": user_prompt})
     with st.chat_message("user"):
