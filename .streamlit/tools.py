@@ -1,3 +1,4 @@
+import io
 import json
 import re
 import urllib.parse
@@ -44,6 +45,65 @@ INSTITUTIONAL_BENCHMARKS = {
         "currency": "INR"
     }
 }
+
+def parse_large_pdf(uploaded_file, query: str = "", max_context_chars: int = 15000) -> str:
+    """Institutional PDF Parser: Handles up to 200MB filings, extracting relevant sections."""
+    try:
+        from pypdf import PdfReader
+    except ImportError:
+        try:
+            from PyPDF2 import PdfReader
+        except ImportError:
+            return "⚠️ [PDF Error]: Neither 'pypdf' nor 'PyPDF2' is installed in the environment."
+
+    try:
+        reader = PdfReader(uploaded_file)
+        total_pages = len(reader.pages)
+        if total_pages == 0:
+            return "⚠️ [PDF Error]: Uploaded PDF document contains 0 pages."
+
+        page_texts = []
+        for idx in range(total_pages):
+            try:
+                txt = reader.pages[idx].extract_text() or ""
+                if txt.strip():
+                    page_texts.append((idx + 1, txt.strip()))
+            except Exception:
+                continue
+
+        if not page_texts:
+            return "⚠️ [PDF Error]: Document appears to be a scanned image with no selectable text."
+
+        # If user asked a specific question, score pages based on keyword density
+        if query and len(query.strip()) > 3:
+            q_tokens = [w.lower() for w in re.findall(r'\b[a-zA-Z]{3,}\b', query) if w.lower() not in {"what", "show", "tell", "from", "with", "this"}]
+            scored_pages = []
+            for p_num, p_txt in page_texts:
+                score = sum(p_txt.lower().count(token) for token in q_tokens)
+                scored_pages.append((score, p_num, p_txt))
+            scored_pages.sort(key=lambda x: x[0], reverse=True)
+            
+            selected = []
+            curr_len = 0
+            for score, p_num, p_txt in scored_pages:
+                if curr_len + len(p_txt) > max_context_chars and selected:
+                    break
+                selected.append(f"--- [FILING EXCERPT - PAGE {p_num}] ---\n{p_txt}")
+                curr_len += len(p_txt)
+            return "\n\n".join(selected)
+
+        # Baseline: Extract opening overview & executive summary
+        combined = []
+        curr_len = 0
+        for p_num, p_txt in page_texts[:15]:
+            if curr_len + len(p_txt) > max_context_chars:
+                break
+            combined.append(f"--- [PAGE {p_num}] ---\n{p_txt}")
+            curr_len += len(p_txt)
+        return "\n\n".join(combined)
+
+    except Exception as e:
+        return f"⚠️ [PDF Parsing Exception]: {str(e)}"
 
 def extract_core_entity(query: str) -> str:
     """Strips conversational noise and standardizes state names."""
@@ -130,7 +190,6 @@ def fetch_google_news_rss(query: str, max_items: int = 3) -> str | None:
                 title = item.findtext("title", "").strip()
                 pub_date = item.findtext("pubDate", "").strip()
                 clean_title = re.sub(r' - [^-]+$', '', title)
-                # Filter out obvious speculative opinion articles
                 if clean_title and not any(term in clean_title.lower() for term in speculative_terms):
                     date_prefix = f"[{pub_date[:16]}] " if pub_date else ""
                     snippets.append(f"• {date_prefix}{clean_title}")
@@ -153,14 +212,12 @@ def dynamic_web_search(query: str) -> str | None:
     is_corporate = any(k in p_lower for k in ["chairman", "ceo", "md", "chief executive", "director", "head of", "head"])
 
     if is_cm:
-        # 1. Target verified incumbency registers directly
         cm_wiki = fetch_wikipedia_entity_summary(f"List of chief ministers of {clean_entity}")
         if not cm_wiki:
             cm_wiki = fetch_wikipedia_entity_summary(f"Chief Minister of {clean_entity}")
         if cm_wiki:
             findings.append(cm_wiki)
 
-        # 2. Query official oath and cabinet appointment records
         pol_news = fetch_google_news_rss(f"\"{clean_entity}\" \"Chief Minister\" \"sworn in\" OR \"takes oath\"", max_items=2)
         if pol_news:
             findings.append(f"[OFFICIAL OATH & CABINET DISCLOSURES]:\n{pol_news}")
