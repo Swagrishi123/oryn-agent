@@ -41,13 +41,15 @@ SYSTEM_PROMPT = (
     "CRITICAL CONVERSATION & MEMORY VAULT PROTOCOL:\n"
     "1. DOCUMENT-FIRST QUANTITATIVE RIGOR: When institutional filing content is provided under [OFFICIAL FINANCIAL FILING DOCUMENT ATTACHED], "
     "perform all quantitative calculations, covenant compliance tests, and balance sheet waterfalls DIRECTLY and IMMEDIATELY using the "
-    "exact numbers, sections, and definitions in that filing text. Do not ask for additional figures.\n"
+    "exact numbers, sections, and definitions in that filing text. Show complete, unhurried calculations for all requested parts. Do not stop until every part is answered.\n"
     "2. MULTI-TURN CONTINUITY ACROSS SESSIONS: Review ALL conversation turns and archived session history in your prompt. "
     "When a user asks to 're-run', 'sensitize', or 'modify' a previous calculation, retain ALL baseline parameters (EBITDA, purchase price, "
     "equity check, debt balances) from the prior prompt or session archive and ONLY adjust the requested variable.\n"
     "3. NO BRACKET TAGS OR ECHOING: NEVER output bracketed headers (e.g., [ORYN REPORT]). Begin directly with the analysis.\n"
     "4. NO CHATBOT HEDGING: Eliminate conversational filler (e.g., 'Based on the available information'). Deliver crisp intelligence.\n"
-    "5. REAL-WORLD INCUMBENCY (STRICT ADHERENCE):\n"
+    "5. CLEAN MARKDOWN FORMATTING: Present formulas in plain, bold text (e.g., **Adjusted EBITDA = Unadjusted EBITDA + Capped Add-backs**). "
+    "Do NOT output raw brackets like '[ \\text{...} ]' or isolated '$' symbols that disrupt markdown rendering.\n"
+    "6. REAL-WORLD INCUMBENCY (STRICT ADHERENCE):\n"
     "   - Tamil Nadu: Chief Minister is M. K. Stalin (DMK), in office since May 2021.\n"
     "   - Maharashtra: Chief Minister is Devendra Fadnavis (BJP / Mahayuti), in office since December 2024.\n"
     "   - SBI: Chairman is Challa Sreenivasulu Setty (C.S. Setty), appointed August 2024.\n"
@@ -99,11 +101,10 @@ KNOWN_ENTITIES = {
 }
 
 def extract_pdf_document_text(uploaded_payload, query: str = "", max_chars: int = 25000) -> tuple[str, int, int]:
-    """Reliable, self-contained PDF extractor handling raw byte bundles, files, strings, or streams."""
+    """Reliable PDF extractor handling raw byte bundles, files, strings, or streams."""
     if uploaded_payload is None:
         return "", 0, 0
 
-    # If already passed as plain text or dictionary with direct text
     if isinstance(uploaded_payload, dict) and "text" in uploaded_payload:
         txt = str(uploaded_payload["text"]).strip()
         return txt, 1, len(txt)
@@ -218,7 +219,7 @@ def extract_and_fetch_live_data(prompt: str, status_callback=None) -> str:
     return "\n\n" + "\n\n".join(injected_context) + "\n\n" if injected_context else ""
 
 def sanitize_report_formatting(text: str) -> str:
-    """Cleans up markdown formatting, unescapes code wrappers, and guarantees no empty returns."""
+    """Cleans up markdown formatting, unescapes code wrappers, and guarantees complete returns."""
     if not text or not text.strip():
         return "No analysis generated. Please check your query or filing input."
 
@@ -287,10 +288,12 @@ def get_best_available_model(client: Groq, exclude_model: str = None, force_refr
 def create_completion_with_fallback(client: Groq, preferred_model: str = None, status_callback=None, **kwargs):
     global CACHED_WORKING_MODEL
     active_model = preferred_model or get_best_available_model(client)
-    kwargs["max_tokens"] = min(kwargs.get("max_tokens", 950), 950)
+    
+    # Target 1500 tokens for institutional depth; Zero out penalties to prevent token-suppression truncation
+    kwargs["max_tokens"] = kwargs.get("max_tokens", 1500)
     kwargs["temperature"] = kwargs.get("temperature", 0.1)
-    kwargs["frequency_penalty"] = 0.15
-    kwargs["presence_penalty"] = 0.1
+    kwargs["frequency_penalty"] = 0.0
+    kwargs["presence_penalty"] = 0.0
     kwargs["model"] = active_model
 
     try:
@@ -298,7 +301,7 @@ def create_completion_with_fallback(client: Groq, preferred_model: str = None, s
     except Exception as e:
         err_str = str(e).lower()
         if any(term in err_str for term in ["output tokens per minute", "otpm", "reduce max_tokens", "rate_limit_exceeded"]):
-            kwargs["max_tokens"] = 700
+            kwargs["max_tokens"] = 850
             alt_model = "llama-3.1-8b-instant" if active_model != "llama-3.1-8b-instant" else "llama-3.3-70b-versatile"
             kwargs["model"] = alt_model
             if status_callback:
@@ -335,7 +338,7 @@ def build_contextual_messages(user_input: str, system_prompt: str) -> list[dict]
         if "messages" in st.session_state and isinstance(st.session_state.messages, list):
             stored = st.session_state.messages
             candidates = stored[:-1] if (stored and stored[-1].get("role") == "user") else stored
-            for m in candidates[-6:]:
+            for m in candidates[-4:]:
                 role = m.get("role", "user")
                 content = str(m.get("content", "")).strip()
                 if role in ["user", "assistant"] and content:
@@ -470,14 +473,11 @@ def run_analyst_agent(
         if pdf_text.startswith("⚠️"):
             return pdf_text, None, None, time.perf_counter() - start_time
 
-        # Safeguard: Flag empty or near-empty PDFs
         if c_count < 100:
             doc_name = uploaded_pdf.get("name", "Document") if isinstance(uploaded_pdf, dict) else "Document"
             err_msg = (
-                f"⚠️ **Incomplete / Empty Filing**: The attached file (`{doc_name}`) contains only {c_count} characters:\n"
-                f"> *\"{pdf_text[:120]}\"*\n\n"
-                f"It does not contain the required credit agreement covenants or financial figures. "
-                f"Please ensure you attach a PDF containing the actual agreement text, or use the benchmark button in the `➕` drawer."
+                f"⚠️ **Incomplete Filing Attached**: The attached file (`{doc_name}`) contains only {c_count} characters.\n"
+                f"Please attach a PDF with selectable text or use the 1-click benchmark in the `➕` drawer."
             )
             return err_msg, None, None, time.perf_counter() - start_time
 
@@ -488,8 +488,8 @@ def run_analyst_agent(
             f"[OFFICIAL FINANCIAL FILING DOCUMENT ATTACHED]:\n"
             f"\"\"\"\n{pdf_text}\n\"\"\"\n\n"
             f"CRITICAL DIRECTIVE: The user's query pertains directly to the document above. Perform all quantitative "
-            f"calculations, covenant compliance tests, and balance sheet waterfalls DIRECTLY and IMMEDIATELY using the "
-            f"exact numbers, sections, and definitions in this filing. Do NOT ask for additional figures.\n\n"
+            f"calculations, covenant compliance tests, and balance sheet waterfalls DIRECTLY and FULLY using the "
+            f"exact numbers, sections, and definitions in this filing. Answer all three parts systematically. Do not truncate.\n\n"
         )
     elif any(k in user_input.lower() for k in ["attached", "credit agreement", "indenture", "filing"]):
         return (
@@ -511,7 +511,7 @@ def run_analyst_agent(
             preferred_model=selected_model,
             status_callback=status_callback,
             messages=messages,
-            max_tokens=950
+            max_tokens=1500
         )
         final_text = resp.choices[0].message.content or ""
         elapsed = time.perf_counter() - start_time
