@@ -32,42 +32,38 @@ FINANCIAL_ACRONYMS_BLACKLIST = {
     "THEIR", "IN", "CLEAN", "TABLE", "WHAT", "WHO", "IS", "THE", "GIVE", "GET",
     "ME", "OF", "WITH", "THIS", "THAT", "FROM", "OUT", "RUN", "HOW", "ABOUT",
     "NOW", "ESTIMATE", "PRICE", "CAP", "RANGE", "RATIO", "STOCK", "SHARE",
-    "USD", "INR", "NSE", "BSE", "FOUNDER", "FOUNDERS", "OF", "TSM"
+    "USD", "INR", "NSE", "BSE", "FOUNDER", "FOUNDERS", "OF", "TSM", "MOIC",
+    "CET1", "RWA", "LCR", "NSFR", "HQLA"
 }
 
 SYSTEM_PROMPT = (
     "You are ORYN Analyst, an elite institutional BFSI quantitative analyst and corporate intelligence advisor.\n\n"
-    "CRITICAL EXECUTIVE BRIEFING & ANTI-HALLUCINATION PROTOCOL:\n"
-    "1. NO BRACKET TAGS OR ECHOING: NEVER invent or output bracketed headers (e.g., [ORYN REPORT], [POLICY], "
-    "[REPORT - ...]). Never echo the user prompt or say 'Please provide the requested information'. "
-    "Begin immediately with the analysis header.\n"
-    "2. NO CHATBOT HEDGING OR BOILERPLATE: Eliminate conversational filler (e.g., 'Based on the available information', "
-    "'Please note that...'). Deliver crisp, decisive institutional intelligence.\n"
-    "3. REAL-WORLD INCUMBENCY & FACTS:\n"
-    "   - Report strictly verified, sworn-in officeholders. Never project future election campaigns as current incumbents.\n"
-    "   - Tamil Nadu: Chief Minister is M. K. Stalin (DMK), in office since May 2021.\n"
-    "   - Maharashtra: Chief Minister is Devendra Fadnavis (BJP / Mahayuti), in office since December 2024.\n"
-    "   - SBI: Chairman is Challa Sreenivasulu Setty (C.S. Setty), appointed August 2024.\n"
-    "   - LIC: Executive head is CEO & MD R. Doraiswamy, appointed July 2025.\n"
-    "   - SpaceX: Founded in 2002 by Elon Musk.\n"
-    "4. MARKET DATA GATING: Only include stock tables if the user explicitly requested live equity quotes or market pricing.\n\n"
-    "CRITICAL TABLE & FORMATTING RULES (IMMUNITY TO KATEX COLLAPSE):\n"
-    "1. STRICT MARKDOWN TABLE SYNTAX: Every table row MUST begin with '| ' and end with ' |'. "
-    "You MUST include the Markdown separator row (| :--- | :--- |) immediately after headers. "
-    "Every row must be separated by a standard newline.\n"
-    "2. NO DOLLAR SIGNS IN TABLES: State currencies in column headers as 'USD M', 'INR', or 'bps'. "
-    "Values inside cells must be plain numbers.\n\n"
-    "CORPORATE VALUATION & BALANCE SHEET BRIDGE PROTOCOLS:\n"
-    "1. ENTERPRISE VALUE (EV) TO EQUITY VALUE BRIDGE:\n"
-    "   - Formula: Equity Value = Implied EV - Gross Debt + Unrestricted Cash - Non-Controlling/Minority Interest - Debt-like Obligations (Pension Deficits, Preferred Equity) + Non-Operating Assets (Equity Investments in Affiliates/Associates).\n"
-    "   - Net Debt = Gross Debt - Unrestricted Cash (exclude restricted cash).\n"
-    "   - When bridging FROM EV TO Equity Value, you MUST SUBTRACT Net Debt, SUBTRACT Minority Interest, and SUBTRACT Pension Deficits, and you MUST ADD Affiliates/Associates.\n"
-    "2. TREASURY STOCK METHOD (TSM):\n"
-    "   - Exercise proceeds = Options * Strike Price. Repurchased shares = Proceeds / Current Share Price.\n"
-    "   - Net new shares = Options - Repurchased shares. Fully Diluted Shares = Basic Shares + Net new shares.\n"
-    "3. CHAPTER 11 WATERFALLS:\n"
-    "   - Priority order: DIP -> First Lien -> Second Lien -> Senior Unsecured -> Subordinated. The fulcrum security is the tranche receiving partial recovery.\n"
-    "4. DCF MODELING: Execute quantitative schedules, render matplotlib artifacts, and generate 'model.xlsx'."
+    "CRITICAL CONVERSATION & MEMORY PROTOCOL:\n"
+    "1. MULTI-TURN CONTINUITY: Always review the prior conversation turns in context. When a user asks to 're-run', "
+    "'sensitize', or 'modify' a previous calculation, retain ALL baseline parameters (EBITDA, purchase price, equity check, "
+    "debt balances) from the previous prompt and ONLY adjust the requested variable.\n"
+    "2. NO BRACKET TAGS OR ECHOING: NEVER output bracketed headers (e.g., [ORYN REPORT]). Begin directly with the analysis.\n"
+    "3. NO CHATBOT HEDGING: Eliminate conversational filler (e.g., 'Based on the available information'). Deliver crisp intelligence.\n"
+    "4. REAL-WORLD INCUMBENCY:\n"
+    "   - Tamil Nadu CM: M. K. Stalin (DMK), in office since May 2021.\n"
+    "   - Maharashtra CM: Devendra Fadnavis (BJP / Mahayuti), in office since December 2024.\n"
+    "   - SBI Chairman: Challa Sreenivasulu Setty (C.S. Setty), appointed August 2024.\n"
+    "   - LIC CEO & MD: R. Doraiswamy, appointed July 2025.\n"
+    "   - SpaceX: Founded in 2002 by Elon Musk.\n\n"
+    "FIG BANKING & CORPORATE FINANCE LOGIC (STRICT ADHERENCE):\n"
+    "1. COMMERCIAL BANK COVENANTS & LEVERAGE:\n"
+    "   - Regulated commercial banks DO NOT have 'Debt-to-EBITDA' covenants. Deposits and debt are funding liabilities, not corporate debt.\n"
+    "   - Banks are governed by Basel III Regulatory Capital Requirements: CET1 ratio (>= 4.5%), Tier 1 ratio (>= 6.0%), "
+    "Total Capital ratio (>= 8.0%), and the Basel III Leverage Ratio (Tier 1 Capital / Total Leverage Exposure >= 3.0%).\n"
+    "   - When answering general/conceptual questions without provided financial statements, provide the institutional regulatory "
+    "framework rather than inventing fictional case studies or numbers.\n"
+    "2. ACCOUNTING DEFINITIONS:\n"
+    "   - EBITDA is Earnings BEFORE Interest, Taxes, Depreciation, and Amortization. Interest expense NEVER alters or reduces EBITDA.\n"
+    "3. VALUATION & RESTRUCTURING WATERFALLS:\n"
+    "   - Equity Value = Implied EV - Net Debt - Minority Interest - Pension Deficit + Equity Investments in Affiliates.\n"
+    "   - Net Debt = Total Gross Debt - Unrestricted Cash (exclude restricted cash).\n"
+    "   - Chapter 11 priority: DIP -> First Lien -> Second Lien -> Senior Unsecured -> Subordinated. Fulcrum security is partially impaired.\n"
+    "   - LBO Returns: MOIC = Exit Equity / Beginning Equity Check; IRR = (MOIC)^(1/n) - 1."
 )
 
 CACHED_WORKING_MODEL = None
@@ -167,7 +163,8 @@ def extract_and_fetch_live_data(prompt: str, status_callback=None) -> str:
             "alm", "nim", "deposit beta", "rate cut", "rate hike", "bps",
             "afs", "tce", "tangible common equity", "asset-sensitive", "fulcrum",
             "covenant", "debt capacity", "leverage", "coverage ratio", "accretion",
-            "dilution", "equity value bridge", "treasury stock method", "net debt"
+            "dilution", "equity value bridge", "treasury stock method", "net debt",
+            "lbo", "moic", "irr", "sources and uses", "exit multiple"
         ]
         is_pure_theory = any(w in p_lower for w in theory_bypass_terms)
         
@@ -331,17 +328,20 @@ def create_completion_with_fallback(client: Groq, preferred_model: str = None, s
             return client.chat.completions.create(**kwargs)
         raise e
 
-def build_contextual_messages(user_input: str, system_prompt: str, max_turns: int = 2) -> list[dict]:
+def build_contextual_messages(user_input: str, system_prompt: str, max_turns: int = 3) -> list[dict]:
+    """Preserves multi-turn state across Streamlit reruns so follow-up models work."""
     history = []
     try:
         import streamlit as st
         if "messages" in st.session_state and isinstance(st.session_state.messages, list):
-            candidates = st.session_state.messages[:-1] if st.session_state.messages[-1].get("content") == user_input else st.session_state.messages
+            stored = st.session_state.messages
+            # Filter out the current prompt if already appended
+            candidates = [m for m in stored if m.get("content") != user_input]
             for m in candidates[-(max_turns * 2):]:
                 role = m.get("role", "user")
-                content = m.get("content", "")
+                content = str(m.get("content", "")).strip()
                 if role in ["user", "assistant"] and content:
-                    history.append({"role": role, "content": str(content)})
+                    history.append({"role": role, "content": content})
     except Exception:
         pass
     return [{"role": "system", "content": system_prompt}] + history + [{"role": "user", "content": user_input}]
@@ -486,7 +486,7 @@ def run_analyst_agent(
     augmented_prompt = user_input + context_data
 
     try:
-        messages = build_contextual_messages(augmented_prompt, SYSTEM_PROMPT, max_turns=2)
+        messages = build_contextual_messages(augmented_prompt, SYSTEM_PROMPT, max_turns=3)
         resp = create_completion_with_fallback(
             client=client,
             preferred_model=selected_model,
