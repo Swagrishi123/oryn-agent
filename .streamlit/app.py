@@ -12,29 +12,31 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS: Ultra-sleek, compact typing pill calibrated for mobile and desktop
+# Custom CSS: Solid Opaque Bottom Dock (Zero Text Bleed-Through) + Slim Gemini Chat Pill
 st.markdown(
     """
     <style>
-    /* Container setup for absolute button docking */
-    div[data-testid="stBottom"] > div,
+    /* Make stBottom 100% OPAQUE so chat messages never bleed behind it */
+    div[data-testid="stBottom"],
     div[data-testid="stBottomBlockContainer"] {
-        position: relative !important;
-        background-color: transparent !important;
-        padding-bottom: 6px !important;
+        background-color: #ffffff !important;
+        border-top: 1px solid #f3e8ff !important;
+        box-shadow: 0 -4px 18px rgba(74, 20, 140, 0.05) !important;
+        padding-top: 8px !important;
+        padding-bottom: 8px !important;
+        z-index: 9999 !important;
     }
 
     /* Force the typing pill to be thin, sleek, and compact (44px height) */
     div[data-testid="stChatInput"] {
-        border-radius: 26px !important;
+        border-radius: 24px !important;
         background-color: #ffffff !important;
         border: 1.5px solid #d8b4fe !important;
         box-shadow: 0 2px 10px rgba(74, 20, 140, 0.07) !important;
         min-height: 44px !important;
         max-height: 44px !important;
         height: 44px !important;
-        padding-top: 0px !important;
-        padding-bottom: 0px !important;
+        padding: 0 4px !important;
         transition: box-shadow 0.2s ease, border-color 0.2s ease !important;
     }
 
@@ -43,10 +45,10 @@ st.markdown(
         box-shadow: 0 4px 16px rgba(74, 20, 140, 0.14) !important;
     }
 
-    /* Single-line compact textarea with left indent for the '+' button */
+    /* Single-line compact textarea with clean indent for the '+' button */
     div[data-testid="stChatInput"] textarea {
-        padding-left: 48px !important;
-        padding-right: 42px !important;
+        padding-left: 46px !important;
+        padding-right: 40px !important;
         padding-top: 10px !important;
         padding-bottom: 10px !important;
         min-height: 42px !important;
@@ -59,7 +61,7 @@ st.markdown(
         overflow: hidden !important;
     }
 
-    /* Floating Send Button centered inside the thin pill */
+    /* Send Button */
     div[data-testid="stChatInput"] button {
         border-radius: 50% !important;
         width: 30px !important;
@@ -69,18 +71,13 @@ st.markdown(
         background-color: #faf5ff !important;
         color: #4a148c !important;
         border: 1px solid #d8b4fe !important;
-        box-shadow: 0 1px 4px rgba(74, 20, 140, 0.15) !important;
-        margin-top: auto !important;
-        margin-bottom: auto !important;
-        display: flex !important;
-        align-items: center !important;
-        justify-content: center !important;
+        margin: auto 2px !important;
     }
 
-    /* Precise anchor: Docks the '+' button directly inside the left of the 44px pill */
+    /* Anchor the '+' button cleanly on the left of the chat pill */
     .st-key-gemini_attach_btn {
         position: absolute !important;
-        left: 12px !important;
+        left: 14px !important;
         bottom: 34px !important;
         z-index: 99999 !important;
         width: 30px !important;
@@ -89,7 +86,6 @@ st.markdown(
         padding: 0 !important;
     }
 
-    .st-key-gemini_attach_btn > div,
     .st-key-gemini_attach_btn button {
         border-radius: 50% !important;
         width: 30px !important;
@@ -99,7 +95,7 @@ st.markdown(
         border: 1px solid #d8b4fe !important;
         background-color: #faf5ff !important;
         color: #4a148c !important;
-        font-size: 17px !important;
+        font-size: 16px !important;
         font-weight: 600 !important;
         line-height: 1 !important;
         display: flex !important;
@@ -108,23 +104,15 @@ st.markdown(
         padding: 0 !important;
         margin: 0 !important;
         box-shadow: 0 1px 4px rgba(74, 20, 140, 0.12) !important;
-        transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.2s !important;
-    }
-
-    .st-key-gemini_attach_btn button:hover {
-        background-color: #ede9fe !important;
-        border-color: #7b1fa2 !important;
-        color: #3b0764 !important;
     }
 
     /* Document Drawer Styling */
     .doc-drawer {
-        background-color: #ffffff;
-        border: 1px solid #e9d5ff;
+        background-color: #faf5ff;
+        border: 1px solid #d8b4fe;
         border-radius: 12px;
-        padding: 12px 14px;
+        padding: 10px 14px;
         margin-bottom: 8px;
-        box-shadow: 0 4px 16px rgba(74, 20, 140, 0.08);
     }
 
     /* Discreet Disclaimer */
@@ -244,19 +232,19 @@ for message in st.session_state.messages:
             )
 
 # ==========================================
-# GEMINI-STYLE BOTTOM DOCK (COMPACT UI)
+# GEMINI-STYLE BOTTOM DOCK
 # ==========================================
 bottom_area = st.bottom if hasattr(st, "bottom") else st.container()
 
 with bottom_area:
-    # 1. Expandable PDF Drawer (Slides open above the typing bar)
+    # 1. Expandable PDF Drawer (Slides open above typing bar)
     if st.session_state.show_uploader:
         with st.container():
             st.markdown(
                 """
                 <div class="doc-drawer">
-                    <span style="font-weight: 600; color: #4a148c; font-size: 13.5px;">
-                        📑 Attach Institutional Filing (up to 200MB)
+                    <span style="font-weight: 600; color: #4a148c; font-size: 13px;">
+                        📑 Attach Institutional Filing (10-K, Indenture up to 200MB)
                     </span>
                 </div>
                 """,
@@ -270,19 +258,27 @@ with bottom_area:
             )
             if uploaded_file is not None:
                 st.session_state.active_pdf = uploaded_file
-                st.success(f"✅ Attached: {uploaded_file.name} ({(uploaded_file.size)/(1024*1024):.1f} MB)")
+                # Auto-close drawer on successful upload to save screen space
+                st.session_state.show_uploader = False
+                st.rerun()
 
-    # 2. Attached Document Indicator Chip
+    # 2. Compact Attached Filing Chip
     if st.session_state.active_pdf is not None and not st.session_state.show_uploader:
-        st.caption(f"📄 **Filing Loaded:** {st.session_state.active_pdf.name} ({(st.session_state.active_pdf.size)/(1024*1024):.1f} MB) — *Click ➕ to change*")
+        c_badge, c_detach = st.columns([6, 1])
+        with c_badge:
+            st.info(f"📄 **Filing Loaded:** {st.session_state.active_pdf.name} ({(st.session_state.active_pdf.size)/(1024*1024):.1f} MB)")
+        with c_detach:
+            if st.button("✕", help="Detach filing"):
+                st.session_state.active_pdf = None
+                st.rerun()
 
-    # 3. Gemini '+' Attachment Button (Anchored by key into left edge)
+    # 3. Gemini '+' Attachment Button
     btn_icon = "✕" if st.session_state.show_uploader else "➕"
     if st.button(btn_icon, key="gemini_attach_btn", help="Attach 10-K, CIM, or Credit Agreement"):
         st.session_state.show_uploader = not st.session_state.show_uploader
         st.rerun()
 
-    # 4. Single-line compact placeholder (prevents multi-line expansion on mobile)
+    # 4. Slim Chat Input Bar
     user_prompt = st.chat_input("Ask ORYN or attach filing...")
 
     # 5. Clean AI Disclaimer
