@@ -280,7 +280,7 @@ with bottom_area:
                     help="Dense filings up to 200MB are indexed dynamically."
                 )
                 if uploaded_file is not None:
-                    # Extract raw text snippet for visual preview
+                    # Extract text preview immediately to verify content
                     extracted_text, p_cnt, c_cnt = agent.extract_pdf_document_text(uploaded_file.getvalue())
                     preview = extracted_text.replace("\n", " ").strip()[:90] if extracted_text else "No text found"
                     st.session_state.active_pdf = {
@@ -294,7 +294,7 @@ with bottom_area:
                     st.rerun()
 
             with col_preset:
-                if st.button("⚡ Load Apex Credit Agreement", help="Load the verified benchmark credit agreement directly"):
+                if st.button("⚡ Load Apex Credit Agreement", help="Load the verified benchmark agreement directly into memory"):
                     st.session_state.active_pdf = {
                         "name": "Apex_Credit_Agreement_Benchmark.txt",
                         "size": len(BENCHMARK_APEX_AGREEMENT.encode("utf-8")),
@@ -305,7 +305,7 @@ with bottom_area:
                     st.session_state.show_uploader = False
                     st.rerun()
 
-    # 2. Compact Attached Filing Chip with Live Preview
+    # 2. Compact Attached Filing Chip with Live Character Inspector
     if st.session_state.active_pdf is not None and not st.session_state.show_uploader:
         c_badge, c_detach = st.columns([6, 1])
         with c_badge:
