@@ -182,12 +182,18 @@ with st.sidebar:
     st.caption("Institutional BFSI Quantitative Intelligence")
     st.markdown("---")
 
-    groq_api_key = st.text_input(
-        "Groq API Key",
+    # Secure API Key Handling (Reads from Cloud Secrets without displaying it)
+    admin_key = st.secrets.get("GROQ_API_KEY", "")
+
+    user_key = st.text_input(
+        "Groq API Key (Optional)",
         type="password",
-        value=st.secrets.get("GROQ_API_KEY", ""),
-        help="Enter your Groq API key (starts with gsk_)"
+        value="",
+        placeholder="Using default system key..." if admin_key else "Enter your gsk_ key...",
+        help="Leave blank to use the default system key, or enter your own Groq key."
     )
+
+    groq_api_key = user_key.strip() if user_key.strip() else admin_key
 
     selected_model = st.selectbox(
         "Inference Engine",
